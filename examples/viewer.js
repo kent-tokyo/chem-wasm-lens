@@ -4,9 +4,9 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import init, { MolecularSystem } from '../pkg/chem_wasm_lens.js';
+import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens/dist/chem-wasm-lens.esm.js';
 
-await init();
+const { MolecularSystem } = await loadChem();
 
 // ── CPK palette & van der Waals radii ────────────────────────────────────────
 

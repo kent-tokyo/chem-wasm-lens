@@ -3,8 +3,7 @@
 // Serve with: python3 -m http.server 8080
 
 // Use the loadChem convenience wrapper (handles Wasm init automatically).
-// When installed from npm: import { loadChem } from '@kent-tokyo/chem-wasm-lens';
-import { loadChem } from '../pkg/index.mjs';
+import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens/dist/chem-wasm-lens.esm.js';
 
 const { MolecularSystem } = await loadChem();
 

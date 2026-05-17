@@ -1,10 +1,10 @@
 // fetch_demo.js — loads a real PDB from RCSB and demonstrates chem-wasm-lens
 
-import init, { MolecularSystem } from '../pkg/chem_wasm_lens.js';
+import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens/dist/chem-wasm-lens.esm.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-await init();
+const { MolecularSystem } = await loadChem();
 
 // ─── Three.js scene setup ────────────────────────────────────────────────────
 
