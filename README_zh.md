@@ -192,10 +192,6 @@ src/lib.rs
 - **按需计算** — 键和空间网格均为懒加载；调用方控制计算时机和开销
 - **体素网格自动回退** — `get_atoms_within_radius` 在索引已构建时使用网格（平均 O(1)），未调用 `build_spatial_index` 时自动回退到 O(N) 线性扫描
 
-## 路线图
-
-详细任务列表请参阅 [`tasks/todo.md`](tasks/todo.md)。
-
 ## 许可证
 
 MIT
