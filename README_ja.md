@@ -4,6 +4,8 @@
 
 Pure Rust で書かれた超軽量の分子解析カーネルで、WebAssembly にコンパイルされます。ブラウザの Web Worker 内で動作し、UI スレッドをブロックすることなく、大規模な分子構造（10k+ 原子）に対するトポロジー解析・距離クエリ・幾何計算を高速に処理します。
 
+**[ライブデモ](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D ビューア](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [実タンパク質（RCSB）](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html)
+
 ## なぜ chem-wasm-lens が必要か
 
 ### 課題：ブラウザでの分子計算はなぜ難しいのか

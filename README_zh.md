@@ -4,6 +4,8 @@
 
 用 Pure Rust 编写的超轻量分子分析内核，编译为 WebAssembly。设计用于在浏览器 Web Worker 中运行，在不阻塞 UI 线程的情况下，对大型分子结构（10k+ 原子）执行高性能的拓扑分析、距离查询和几何计算。
 
+**[在线演示](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D 查看器](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [真实蛋白质（RCSB）](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html)
+
 ## 为什么需要 chem-wasm-lens？
 
 ### 问题：浏览器中的分子计算为何困难
