@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chem-wasm-lens — real protein demo</title>
+  <style>
+    body { font-family: monospace; max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.1rem; }
+    h2 { font-size: 0.95rem; margin-top: 1.8rem; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+    pre { background: #f5f5f5; padding: 1rem; overflow-x: auto; font-size: 0.82rem; line-height: 1.5; }
+    .row { display: flex; gap: 1rem; align-items: flex-start; }
+    .ctrl { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.8rem; }
+    input[type=text] { font-family: monospace; font-size: 0.9rem; padding: 4px 8px; width: 6rem; border: 1px solid #aaa; border-radius: 3px; }
+    button { font-family: monospace; font-size: 0.85rem; padding: 4px 10px; cursor: pointer; border: 1px solid #888; border-radius: 3px; background: #fff; }
+    button:hover { background: #eee; }
+    button.active { background: #4a90d9; color: #fff; border-color: #4a90d9; }
+    canvas { border: 1px solid #ddd; border-radius: 4px; display: block; }
+    #status { color: #888; font-size: 0.8rem; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>chem-wasm-lens — real protein demo &nbsp;
+    <a href="index.html" style="font-size:0.8rem;color:#48a">[ text demo ]</a>
+    <a href="viewer.html" style="font-size:0.8rem;color:#48a">[ 3D viewer ]</a>
+  </h1>
+
+  <div class="ctrl">
+    <span>PDB ID:</span>
+    <input type="text" id="pdbid" value="1UBQ" maxlength="4">
+    <button id="btn-load">Load from RCSB</button>
+    <button id="btn-1ubq" class="active">1UBQ</button>
+    <button id="btn-1crn">1CRN</button>
+    <button id="btn-4hhb">4HHB</button>
+  </div>
+  <div id="status">Ready.</div>
+
+  <h2>1. Structure overview</h2>
+  <pre id="out-overview"></pre>
+
+  <h2>2. Spatial query — residues near the N-terminus (atom 0)</h2>
+  <pre id="out-spatial"></pre>
+
+  <h2>3. Geometry — first backbone dihedral angles</h2>
+  <pre id="out-geometry"></pre>
+
+  <h2>4. 3D view (ball-and-stick, C-alpha trace)</h2>
+  <div class="row">
+    <canvas id="canvas" width="720" height="420"></canvas>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="fetch_demo.js"></script>
+</body>
+</html>

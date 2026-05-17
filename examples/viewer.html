@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chem-wasm-lens — 3D Viewer</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.min.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+    }
+  }
+  </script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      display: flex;
+      height: 100vh;
+      font-family: monospace;
+      background: #0a0a10;
+      color: #ccc;
+      overflow: hidden;
+    }
+
+    #canvas-wrap {
+      flex: 1;
+      position: relative;
+    }
+    canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    /* atom-pick tooltip */
+    #tooltip {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      padding: 8px 12px;
+      background: rgba(10,10,20,0.85);
+      border: 1px solid #335;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      color: #aac;
+      pointer-events: none;
+      display: none;
+      backdrop-filter: blur(4px);
+    }
+
+    #panel {
+      width: 290px;
+      display: flex;
+      flex-direction: column;
+      border-left: 1px solid #1a1a2e;
+      background: #0d0d18;
+      overflow-y: auto;
+    }
+
+    .section {
+      padding: 14px 16px;
+      border-bottom: 1px solid #1a1a28;
+    }
+
+    .section-title {
+      font-size: 0.68rem;
+      color: #446;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    h1 { font-size: 0.88rem; color: #7799ee; letter-spacing: 0.04em; }
+    h1 span { color: #446; font-size: 0.72rem; }
+
+    #stats { font-size: 0.77rem; color: #888; line-height: 2; }
+    #stats b { color: #cce; }
+
+    /* mode buttons */
+    .mode-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px;
+    }
+    .mode-btn {
+      padding: 6px 4px;
+      font-size: 0.73rem;
+      font-family: monospace;
+      background: #111120;
+      border: 1px solid #223;
+      color: #778;
+      border-radius: 3px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+    }
+    .mode-btn:hover        { border-color: #557; color: #aac; }
+    .mode-btn.active       { background: #162040; border-color: #4466bb; color: #88aaff; }
+
+    /* glow toggle */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .toggle {
+      width: 36px; height: 18px;
+      background: #223;
+      border-radius: 9px;
+      position: relative;
+      cursor: pointer;
+      border: 1px solid #334;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    .toggle.on { background: #1e3a6e; border-color: #4466bb; }
+    .toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px; left: 2px;
+      width: 12px; height: 12px;
+      background: #556;
+      border-radius: 50%;
+      transition: left 0.2s, background 0.2s;
+    }
+    .toggle.on::after { left: 20px; background: #88aaff; }
+
+    /* preset buttons */
+    .preset-wrap { display: flex; flex-wrap: wrap; gap: 4px; }
+    .preset-btn {
+      padding: 5px 9px;
+      font-size: 0.72rem;
+      font-family: monospace;
+      background: #111120;
+      border: 1px solid #223;
+      color: #7799cc;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .preset-btn:hover { border-color: #4466bb; color: #aac; }
+
+    textarea {
+      width: 100%;
+      height: 110px;
+      background: #090910;
+      border: 1px solid #223;
+      color: #99aacc;
+      font-family: monospace;
+      font-size: 0.7rem;
+      padding: 7px;
+      resize: vertical;
+      outline: none;
+      border-radius: 3px;
+    }
+    textarea:focus { border-color: #4466bb; }
+
+    #load-btn {
+      margin-top: 7px;
+      width: 100%;
+      padding: 7px;
+      background: #0f2244;
+      border: 1px solid #224488;
+      color: #7799ff;
+      font-family: monospace;
+      font-size: 0.78rem;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    #load-btn:hover { background: #163058; }
+
+    #error {
+      margin: 0 16px 6px;
+      padding: 6px 10px;
+      background: #200a0a;
+      border: 1px solid #660000;
+      border-radius: 3px;
+      font-size: 0.7rem;
+      color: #ff8888;
+      display: none;
+    }
+
+    /* legend */
+    .elem-row { display: flex; align-items: center; gap: 7px; margin: 3px 0; font-size: 0.72rem; color: #778; }
+    .elem-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+    #hint {
+      margin-top: auto;
+      padding: 10px 16px;
+      font-size: 0.68rem;
+      color: #334;
+      border-top: 1px solid #111;
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-wrap">
+    <canvas id="c"></canvas>
+    <div id="tooltip"></div>
+  </div>
+
+  <div id="panel">
+    <div class="section">
+      <h1>chem-wasm-lens <span>3D viewer</span></h1>
+    </div>
+
+    <div class="section" id="stats">
+      atoms: <b id="s-atoms">—</b><br>
+      bonds: <b id="s-bonds">—</b><br>
+      parse: <b id="s-parse">—</b> ms
+    </div>
+
+    <div class="section">
+      <div class="section-title">display mode</div>
+      <div class="mode-group">
+        <button class="mode-btn active" data-mode="bas">ball &amp; stick</button>
+        <button class="mode-btn"        data-mode="cpk">space fill</button>
+        <button class="mode-btn"        data-mode="stick">stick only</button>
+        <button class="mode-btn"        data-mode="ribbon">backbone</button>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle on" id="glow-toggle"></div>
+        <span style="font-size:0.72rem;color:#778">glow effect</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">presets</div>
+      <div class="preset-wrap">
+        <button class="preset-btn" data-preset="water">water</button>
+        <button class="preset-btn" data-preset="ethanol">ethanol</button>
+        <button class="preset-btn" data-preset="caffeine">caffeine</button>
+        <button class="preset-btn" data-preset="benzene">benzene</button>
+        <button class="preset-btn" data-preset="helix">α-helix</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">paste XYZ or PDB</div>
+      <textarea id="mol-input"></textarea>
+      <button id="load-btn">load molecule</button>
+    </div>
+    <div id="error"></div>
+
+    <div class="section">
+      <div class="section-title">CPK colors</div>
+      <div class="elem-row"><div class="elem-dot" style="background:#ff4444"></div>O oxygen</div>
+      <div class="elem-row"><div class="elem-dot" style="background:#aaa"></div>C carbon</div>
+      <div class="elem-row"><div class="elem-dot" style="background:#4488ff"></div>N nitrogen</div>
+      <div class="elem-row"><div class="elem-dot" style="background:#eee"></div>H hydrogen</div>
+      <div class="elem-row"><div class="elem-dot" style="background:#ffdd00"></div>S sulfur</div>
+      <div class="elem-row"><div class="elem-dot" style="background:#ff8800"></div>P phosphorus</div>
+    </div>
+
+    <div id="hint">drag · rotate &nbsp; scroll · zoom &nbsp; click · atom info</div>
+  </div>
+
+  <script type="module" src="viewer.js"></script>
+</body>
+</html>

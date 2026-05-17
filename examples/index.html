@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chem-wasm-lens demo</title>
+  <!--
+    Build before opening:
+      wasm-pack build --target web
+
+    Serve (ES modules require HTTP, not file://):
+      python3 -m http.server 8080
+      # then open http://localhost:8080/examples/
+  -->
+  <style>
+    body { font-family: monospace; max-width: 860px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.2rem; }
+    h2 { font-size: 1rem; margin-top: 2rem; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+    pre { background: #f5f5f5; padding: 1rem; overflow-x: auto; font-size: 0.85rem; }
+    .ok  { color: #2a7; }
+    .err { color: #c33; }
+  </style>
+</head>
+<body>
+  <h1>chem-wasm-lens — browser demo &nbsp;<a href="viewer.html" style="font-size:0.8rem;color:#48a">[ 3D viewer ]</a> &nbsp;<a href="fetch_demo.html" style="font-size:0.8rem;color:#48a">[ real protein ]</a> &nbsp;<a href="smiles_svg.html" style="font-size:0.8rem;color:#48a">[ SMILES → SVG ]</a></h1>
+
+  <h2>1. XYZ — water molecule</h2>
+  <pre id="out-xyz"></pre>
+
+  <h2>2. Bond detection (Cordero 2008)</h2>
+  <pre id="out-bonds"></pre>
+
+  <h2>3. Bulk coordinate export</h2>
+  <pre id="out-bulk"></pre>
+
+  <h2>4. Spatial query — the "lens" feature</h2>
+  <pre id="out-spatial"></pre>
+
+  <h2>5. PDB — residue neighbor search</h2>
+  <pre id="out-pdb"></pre>
+
+  <h2>6. Performance timing (Wasm, this machine)</h2>
+  <pre id="out-perf"></pre>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

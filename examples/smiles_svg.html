@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chem-wasm-lens — SMILES → SVG</title>
+  <!--
+    Build before opening:
+      wasm-pack build --target web
+
+    Serve (ES modules require HTTP, not file://):
+      python3 -m http.server 8080
+      # then open http://localhost:8080/examples/smiles_svg.html
+  -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 760px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #fafafa;
+      color: #222;
+    }
+    h1 { font-size: 1.15rem; margin-bottom: 0.25rem; }
+    .subtitle { font-size: 0.82rem; color: #666; margin-bottom: 1.5rem; }
+    .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    label { font-size: 0.82rem; color: #555; white-space: nowrap; }
+    input[type=text] {
+      flex: 1;
+      min-width: 200px;
+      font-size: 1rem;
+      font-family: monospace;
+      padding: 0.45rem 0.7rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button {
+      padding: 0.45rem 1rem;
+      border: 1px solid #888;
+      border-radius: 4px;
+      background: #f0f0f0;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: #e0e0e0; }
+    button.preset {
+      font-size: 0.78rem;
+      padding: 0.3rem 0.6rem;
+      border-color: #aaa;
+    }
+    #canvas {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      min-height: 320px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #canvas svg { display: block; }
+    #status {
+      font-size: 0.82rem;
+      color: #555;
+      margin-top: 0.5rem;
+      min-height: 1.2em;
+    }
+    #status.err { color: #c33; }
+    .smarts-row { background: #f5f8ff; border: 1px solid #d0d8f0; border-radius: 6px; padding: 0.6rem 0.8rem; margin-bottom: 0.75rem; }
+    .smarts-presets { font-size: 0.75rem; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>chem-wasm-lens — SMILES → SVG renderer
+    &nbsp;<a href="index.html" style="font-size:0.8rem;color:#48a">[ feature demo ]</a>
+    &nbsp;<a href="viewer.html" style="font-size:0.8rem;color:#48a">[ 3D viewer ]</a>
+  </h1>
+  <p class="subtitle">
+    Pure Rust/Wasm · ring-aware 2D layout · CPK colours · aromatic inner dashes · SMARTS highlight
+  </p>
+
+  <div class="row">
+    <input id="smiles" type="text" value="c1ccccc1" placeholder="SMILES…" autocomplete="off" spellcheck="false" />
+    <button id="render-btn">Render</button>
+  </div>
+
+  <div class="row">
+    <span style="font-size:0.78rem;color:#888">Presets:</span>
+    <button class="preset" data-smiles="c1ccccc1">Benzene</button>
+    <button class="preset" data-smiles="c1ccc2ccccc2c1">Naphthalene</button>
+    <button class="preset" data-smiles="c1ccncc1">Pyridine</button>
+    <button class="preset" data-smiles="CC(=O)O">Acetic acid</button>
+    <button class="preset" data-smiles="CC(=O)Nc1ccc(O)cc1">Paracetamol</button>
+    <button class="preset" data-smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C">Caffeine</button>
+    <button class="preset" data-smiles="CC(C)Cc1ccc(cc1)C(C)C(=O)O">Ibuprofen</button>
+    <button class="preset" data-smiles="N[C@@H](C)C(=O)O">L-Alanine</button>
+  </div>
+
+  <div class="smarts-row">
+    <div class="row" style="margin-bottom:0.4rem">
+      <label>SMARTS highlight:</label>
+      <input id="smarts" type="text" value="" placeholder="e.g. C(=O)[OH]  or  c1ccccc1  or  [OH]" autocomplete="off" spellcheck="false" style="font-size:0.9rem" />
+      <button id="highlight-btn">Highlight</button>
+      <button id="clear-btn">Clear</button>
+    </div>
+    <div class="smarts-presets">
+      Presets:
+      <button class="preset-smarts" data-smarts="[OH]">[OH]</button>
+      <button class="preset-smarts" data-smarts="C(=O)[OH]">C(=O)[OH]</button>
+      <button class="preset-smarts" data-smarts="c1ccccc1">c1ccccc1</button>
+      <button class="preset-smarts" data-smarts="[nH]">[nH]</button>
+      <button class="preset-smarts" data-smarts="C=O">C=O</button>
+      <button class="preset-smarts" data-smarts="[#7]">[#7]</button>
+    </div>
+  </div>
+
+  <div class="smarts-row" style="background:#f5fff5;border-color:#b8ddb8;margin-top:0.5rem;">
+    <div class="row" style="margin-bottom:0">
+      <label>Tanimoto compare:</label>
+      <input id="smiles2" type="text" value="c1ccccc1" placeholder="2nd SMILES…"
+             autocomplete="off" spellcheck="false" style="font-size:0.9rem"/>
+      <button id="tanimoto-btn">Compare</button>
+    </div>
+  </div>
+  <div id="tanimoto-result" style="font-size:0.82rem;color:#555;margin-top:0.3rem;min-height:1em"></div>
+
+  <div id="canvas"><span style="color:#aaa;font-size:0.9rem">loading…</span></div>
+  <div id="status"></div>
+
+  <script type="module">
+    import { loadChem } from '../pkg/index.mjs';
+
+    const { MolecularSystem } = await loadChem();
+
+    const smilesInput = document.getElementById('smiles');
+    const smartsInput = document.getElementById('smarts');
+    const canvas      = document.getElementById('canvas');
+    const status      = document.getElementById('status');
+
+    let currentMol = null;
+
+    function clearCanvas() {
+      while (canvas.firstChild) canvas.removeChild(canvas.firstChild);
+    }
+
+    function render(smiles, smarts) {
+      status.className = '';
+      status.textContent = '';
+      clearCanvas();
+      currentMol = null;
+
+      if (!smiles.trim()) {
+        status.textContent = 'Enter a SMILES string above.';
+        return;
+      }
+
+      let mol;
+      try {
+        mol = MolecularSystem.from_smiles(smiles.trim());
+      } catch (e) {
+        status.className = 'err';
+        status.textContent = `Parse error: ${e}`;
+        return;
+      }
+
+      mol.compute_2d_coords();
+      currentMol = mol;
+
+      const W = Math.min(canvas.clientWidth || 600, 680);
+      const H = 320;
+
+      let svg;
+      let matchCount = 0;
+      if (smarts && smarts.trim()) {
+        const atoms = mol.get_substructure_atoms(smarts.trim());
+        matchCount = mol.find_substructure(smarts.trim()).length;
+        svg = mol.to_svg_string_highlighted(W, H, atoms);
+      } else {
+        svg = mol.to_svg_string(W, H);
+      }
+
+      // Insert via DOMParser
+      const svgEl = new DOMParser()
+        .parseFromString(svg, 'image/svg+xml').documentElement;
+      canvas.appendChild(svgEl);
+
+      const n = mol.atom_count();
+      const aromatic = Array.from({ length: n }, (_, i) => mol.is_aromatic(i)).filter(Boolean).length;
+      const formula = mol.molecular_formula();
+      const mw = mol.molecular_weight().toFixed(2);
+      const chiralCount = mol.stereo_center_count();
+      const tpsa = mol.tpsa().toFixed(1);
+      const hbd  = mol.h_bond_donors();
+      const hba  = mol.h_bond_acceptors();
+      let info = `${n} atoms  ·  ${mol.bond_count()} bonds`;
+      if (aromatic > 0) info += `  ·  ${aromatic} aromatic atoms`;
+      info += `  ·  ${formula}  (${mw} Da)`;
+      info += `  ·  TPSA ${tpsa}  ·  HBD ${hbd}  HBA ${hba}`;
+      if (chiralCount > 0) info += `  ·  ${chiralCount} chiral center${chiralCount > 1 ? 's' : ''}`;
+      if (smarts && smarts.trim()) {
+        info += matchCount > 0
+          ? `  ·  SMARTS: ${matchCount} match${matchCount > 1 ? 'es' : ''} (yellow)`
+          : '  ·  SMARTS: no matches';
+      }
+      status.textContent = info;
+    }
+
+    // Initial render
+    render(smilesInput.value, '');
+
+    document.getElementById('render-btn').addEventListener('click', () =>
+      render(smilesInput.value, smartsInput.value));
+    smilesInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') render(smilesInput.value, smartsInput.value);
+    });
+
+    document.getElementById('highlight-btn').addEventListener('click', () =>
+      render(smilesInput.value, smartsInput.value));
+    smartsInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') render(smilesInput.value, smartsInput.value);
+    });
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+      smartsInput.value = '';
+      render(smilesInput.value, '');
+    });
+
+    document.querySelectorAll('.preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        smilesInput.value = btn.dataset.smiles;
+        render(btn.dataset.smiles, smartsInput.value);
+      });
+    });
+
+    document.querySelectorAll('.preset-smarts').forEach(btn => {
+      btn.addEventListener('click', () => {
+        smartsInput.value = btn.dataset.smarts;
+        render(smilesInput.value, btn.dataset.smarts);
+      });
+    });
+
+    const tanimotoResult = document.getElementById('tanimoto-result');
+    document.getElementById('tanimoto-btn').addEventListener('click', () => {
+      const s2 = document.getElementById('smiles2').value.trim();
+      if (!currentMol || !s2) { tanimotoResult.textContent = ''; return; }
+      try {
+        const mol2 = MolecularSystem.from_smiles(s2);
+        const sim = currentMol.tanimoto_similarity(mol2);
+        tanimotoResult.textContent = `Tanimoto similarity: ${sim.toFixed(3)}  (${s2})`;
+        tanimotoResult.style.color = sim >= 0.7 ? '#224488' : '#555';
+      } catch (e) {
+        tanimotoResult.textContent = `Error: ${e}`;
+        tanimotoResult.style.color = '#c33';
+      }
+    });
+  </script>
+</body>
+</html>

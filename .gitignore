@@ -1,0 +1,8 @@
+tasks/
+CLAUDE.md
+AGENTS.md
+/target
+/pkg
+.claude/
+node_modules/
+template/dist/

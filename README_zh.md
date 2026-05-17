@@ -1,0 +1,197 @@
+# chem-wasm-lens
+
+用 Pure Rust 编写的超轻量分子分析内核，编译为 WebAssembly。设计用于在浏览器 Web Worker 中运行，在不阻塞 UI 线程的情况下，对大型分子结构（10k+ 原子）执行高性能的拓扑分析、距离查询和几何计算。
+
+## 为什么需要 chem-wasm-lens？
+
+### 问题：浏览器中的分子计算为何困难
+
+基于 Web 的分子工具面临共同的瓶颈。
+
+**1. JavaScript 不适合大规模计算**
+现实中的分子——蛋白质、核酸——通常超过 10,000 个原子。原子对距离计算为 O(N²)。在 JS 主线程上运行会导致数秒的 UI 冻结。
+
+**2. 服务端工具引入延迟且无法离线使用**
+Python + RDKit 等服务端方案需要搭建和维护后端，存在网络延迟，无法在离线环境或高频交互场景中使用。
+
+**3. 现有 Wasm 分子库体积过大**
+RDKit.js（C++ RDKit 的 Wasm 移植版）功能丰富，但 **Bundle 大小超过 ~10MB**。对于只需要距离查询和近邻搜索的应用来说，这远超所需。
+
+### 解决方案
+
+| | chem-wasm-lens | RDKit.js | Python + RDKit | Pure JS |
+|---|:---:|:---:|:---:|:---:|
+| 浏览器中运行 | 是 | 是 | 否 | 是 |
+| 离线可用 | 是 | 是 | 否 | 是 |
+| 支持 10k+ 原子 | 是 | 是 | 是 | 否 |
+| Bundle 大小 | 小 | 大(~10MB+) | — | 小 |
+| 不阻塞 UI | 是 (Web Worker) | 部分支持 | — | 否 |
+| 无需安装 | 是 | 是 | 否 | 是 |
+| C/C++ 依赖 | 无 | 有 | 有 | 无 |
+
+**chem-wasm-lens 的方法：**
+
+- **Rust → Wasm 实现接近原生的速度** — 无垃圾回收器，在浏览器中实现可预测的低延迟
+- **Web Worker 优先设计** — 重计算在独立线程运行，UI 始终保持响应
+- **零 C/C++ 依赖** — Pure Rust，`wasm-pack build` 一步完成构建，无需复杂的交叉编译配置
+- **专注于分析内核** — 不含 3D 渲染或 UI，可与现有可视化工具（3Dmol.js、NGL Viewer 等）组合使用
+
+### 适用场景
+
+- 在浏览器中直接加载 PDB/XYZ 文件，实时计算原子间距离或邻近残基
+- 构建无需后端的离线分子查看器或教育工具
+- 介于「RDKit.js 太重」与「Pure JS 太慢」之间的需求
+
+---
+
+## 特性
+
+- **Wasm 优先** — 零原生 C/C++ 依赖；通过 `wasm-pack` 干净构建
+- **高性能** — 使用扁平 `Vec<f32>` 坐标布局，实现缓存友好的距离计算
+- **零/最小拷贝** — 从 JS 传递原始文件内容；解析和状态保持完全在 Wasm 内完成
+- **安全解析** — 解析逻辑中无 `unwrap()`；全面使用 `Result` 类型进行显式错误处理
+- **键检测** — Cordero 2008 共价半径表（18 种元素）；通过 `compute_bonds()` 按需计算
+- **体素网格空间索引** — 均匀网格将近邻查询加速至平均 O(1)；未构建索引时自动回退到 O(N) 线性扫描
+- **serde JSON 输出** — `get_atom_info()` 和 `get_neighbors_info()` 通过 `serde-wasm-bindgen` 返回结构化 JS 对象
+
+## 状态
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| 1 | XYZ 解析器、`MolecularSystem` 结构体、Wasm 暴露 | 完成 |
+| 1 | PDB 解析器（`ATOM`/`HETATM`）、键检测 | 完成 |
+| 2 | 距离查询、半径近邻搜索 | 完成 |
+| 2 | 20k+ 原子的体素网格空间索引 | 完成 |
+| 3 | CI（GitHub Actions: `cargo test`、`clippy`、`wasm-pack build`） | 完成 |
+| 3 | JS/TS 使用示例、浏览器测试、npm 发布、基准测试 | 计划中 |
+
+## 快速开始
+
+### 前置条件
+
+```sh
+# Rust 工具链
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# wasm-pack
+cargo install wasm-pack
+```
+
+### 构建
+
+```sh
+# 原生构建（用于 cargo test）
+cargo build
+
+# WebAssembly — 打包器目标（Webpack, Vite 等）
+wasm-pack build --target bundler
+
+# WebAssembly — 原生 Web 目标（无需打包器）
+wasm-pack build --target web
+```
+
+### 测试
+
+```sh
+# 原生单元测试
+cargo test
+
+# 代码检查
+cargo clippy
+
+# 浏览器测试（需要 Chrome）
+wasm-pack test --headless --chrome
+```
+
+## 使用示例（JavaScript / TypeScript）
+
+### 基础 — 解析并查看原子
+
+```js
+import init, { MolecularSystem } from './pkg/chem_wasm_lens.js';
+
+await init();
+
+const xyzData = `3
+water
+O   0.000  0.000  0.119
+H   0.000  0.757 -0.477
+H   0.000 -0.757 -0.477
+`;
+
+const mol = MolecularSystem.from_xyz_string(xyzData);
+
+console.log(mol.atom_count());   // 3
+console.log(mol.get_symbol(0));  // "O"
+console.log(mol.get_x(1));      // 0.0
+```
+
+### 空间查询 — "lens" 核心用例
+
+```js
+import init, { MolecularSystem } from './pkg/chem_wasm_lens.js';
+
+await init();
+
+// 将完整 PDB 文件内容作为字符串传入 — 解析完全在 Wasm 内完成
+const mol = MolecularSystem.from_pdb_string(pdbFileContent);
+
+// 构建体素网格空间索引（推荐网格大小：3–5 Å）
+// 此步骤可选，但可将 get_atoms_within_radius 加速至平均 O(1)
+mol.build_spatial_index(5.0);
+
+// 查询原子索引 42 半径 5 Å 内的所有原子
+// 返回 JS Array（普通对象数组）: [{index, symbol, x, y, z, atom_name, ...}, ...]
+const centerAtom = 42;
+const neighbors = mol.get_neighbors_info(centerAtom, 5.0);
+
+neighbors.forEach(atom => {
+  console.log(`${atom.chain_id}:${atom.residue_name}${atom.residue_id} ${atom.atom_name} — dist ≈ 5 Å`);
+});
+
+// 也可以只获取半径内的残基标签
+const residues = mol.get_residues_within_radius(centerAtom, 5.0);
+console.log(residues); // 例如: ["A:ALA:10", "A:GLY:11", ...]
+```
+
+## 架构
+
+```
+src/lib.rs
+├── ParseError          — 错误枚举（实现 Display，不依赖 JsValue）
+├── SpatialGrid         — 私有；基于 HashMap 的均匀网格，实现平均 O(1) 近邻查找
+├── AtomInfo            — serde::Serialize；get_atom_info / get_neighbors_info 的输出形状
+├── MolecularSystem     — 核心结构体（#[wasm_bindgen]）
+│   ├── symbols / x / y / z: Vec<f32>  — 分离扁平向量，适合 SIMD
+│   ├── atom_names / residue_names / residue_ids / chain_ids / hetatm_flags  — PDB 元数据
+│   ├── bonds: Vec<Vec<usize>>          — 通过 compute_bonds() 按需计算
+│   └── spatial_grid: Option<SpatialGrid>  — 通过 build_spatial_index() 按需构建
+├── parse_xyz()         — 纯 Rust XYZ 解析器，可通过 cargo test 测试
+├── parse_pdb()         — 固定宽度列 PDB 解析器（ATOM/HETATM 记录）
+├── covalent_radius()   — Cordero 2008 表（18 种元素）
+└── impl MolecularSystem (#[wasm_bindgen])
+    ├── 解析器:     from_xyz_string(), from_pdb_string()
+    ├── 访问器:     atom_count(), get_symbol/x/y/z(), get_atom_name(),
+    │               get_residue_name/id(), get_chain_id(), is_hetatm()
+    ├── 批量导出:   get_positions_flat() → Float32Array, get_symbols_json()
+    ├── 键检测:     compute_bonds(), get_bonds(), bond_count(), has_bonds_computed()
+    ├── 空间查询:   distance(), get_atoms_within_radius(), get_residues_within_radius()
+    ├── 空间索引:   build_spatial_index(), has_spatial_index()
+    └── JSON 输出:  get_atom_info() → JsValue, get_neighbors_info() → JsValue
+```
+
+**主要设计决策：**
+
+- **解析器与 Wasm 边界分离** — 纯 Rust 函数（`parse_xyz`、`parse_pdb`）不含 `JsValue`，可通过 `cargo test` 在无浏览器环境下完整测试
+- **坐标向量分离** — `x`、`y`、`z` 作为独立的 `Vec<f32>`，最大化向量化距离计算的缓存局部性
+- **传字符串而非对象** — 整个文件内容作为单个 `&str` 跨越 JS/Wasm 边界，解析完全在 Rust 侧进行
+- **按需计算** — 键和空间网格均为懒加载；调用方控制计算时机和开销
+- **体素网格自动回退** — `get_atoms_within_radius` 在索引已构建时使用网格（平均 O(1)），未调用 `build_spatial_index` 时自动回退到 O(N) 线性扫描
+
+## 路线图
+
+详细任务列表请参阅 [`tasks/todo.md`](tasks/todo.md)。
+
+## 许可证
+
+MIT
