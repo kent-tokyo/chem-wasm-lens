@@ -1,5 +1,7 @@
 # chem-wasm-lens
 
+[日本語](README_ja.md) | [中文](README_zh.md)
+
 [![CI](https://github.com/kent-tokyo/chem-wasm-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/kent-tokyo/chem-wasm-lens/actions)
 [![crates.io](https://img.shields.io/crates/v/chem-wasm-lens)](https://crates.io/crates/chem-wasm-lens)
 [![npm](https://img.shields.io/npm/v/@kent-tokyo/chem-wasm-lens)](https://www.npmjs.com/package/@kent-tokyo/chem-wasm-lens)

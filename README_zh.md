@@ -1,5 +1,7 @@
 # chem-wasm-lens
 
+[English](README.md) | [日本語](README_ja.md)
+
 用 Pure Rust 编写的超轻量分子分析内核，编译为 WebAssembly。设计用于在浏览器 Web Worker 中运行，在不阻塞 UI 线程的情况下，对大型分子结构（10k+ 原子）执行高性能的拓扑分析、距离查询和几何计算。
 
 ## 为什么需要 chem-wasm-lens？

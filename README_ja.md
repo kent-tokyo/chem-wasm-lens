@@ -1,5 +1,7 @@
 # chem-wasm-lens
 
+[English](README.md) | [中文](README_zh.md)
+
 Pure Rust で書かれた超軽量の分子解析カーネルで、WebAssembly にコンパイルされます。ブラウザの Web Worker 内で動作し、UI スレッドをブロックすることなく、大規模な分子構造（10k+ 原子）に対するトポロジー解析・距離クエリ・幾何計算を高速に処理します。
 
 ## なぜ chem-wasm-lens が必要か
