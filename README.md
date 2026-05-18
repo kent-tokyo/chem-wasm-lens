@@ -9,7 +9,7 @@
 
 An ultra-lightweight molecular analysis kernel in **pure Rust**, compiled to **WebAssembly**. Parse PDB / SDF / XYZ / mmCIF files, run spatial queries, detect bonds, compute geometry, and perform fingerprint similarity — all inside a browser Web Worker, with zero C/C++ dependencies.
 
-**[Live demo](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D viewer](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [real protein (RCSB)](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html)
+**[Live demo](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D viewer](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [real protein (RCSB)](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [structure editor](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html)
 
 ---
 

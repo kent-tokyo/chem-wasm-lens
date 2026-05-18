@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chem-wasm-lens — Structure Editor</title>
+  <!--
+    Requires @kent-tokyo/chem-wasm-lens >= 0.2.0 on CDN (editor kernel API).
+    Local dev: wasm-pack build --target web && node scripts/build_cdn.mjs
+               python3 -m http.server 8080 -> http://localhost:8080/examples/editor.html
+  -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+      padding: 0.4rem 0.8rem;
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+      flex-shrink: 0;
+      height: 36px;
+    }
+    header h1 { font-size: 0.95rem; margin: 0; font-weight: 600; }
+    header a { font-size: 0.78rem; color: #48a; text-decoration: none; }
+    header a:hover { text-decoration: underline; }
+    #hdr-status { font-size: 0.78rem; color: #666; margin-left: auto; }
+
+    .workspace {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────── */
+    .sidebar {
+      width: 148px;
+      min-width: 148px;
+      background: #fff;
+      border-right: 1px solid #ddd;
+      padding: 0.5rem 0.5rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .sec-label {
+      font-size: 0.66rem;
+      color: #999;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 2px;
+      margin-bottom: 3px;
+    }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 2px; }
+    button.tb {
+      padding: 0.28rem 0.4rem;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      background: #f7f7f7;
+      cursor: pointer;
+      font-size: 0.78rem;
+      min-width: 36px;
+      text-align: center;
+      line-height: 1;
+      transition: background 0.1s;
+    }
+    button.tb:hover { background: #e8e8e8; }
+    button.tb.on { background: #4488cc; color: #fff; border-color: #2266aa; }
+    button.act {
+      display: block;
+      width: 100%;
+      padding: 0.28rem 0.5rem;
+      text-align: left;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      background: #f7f7f7;
+      cursor: pointer;
+      font-size: 0.76rem;
+      margin-bottom: 2px;
+      transition: background 0.1s;
+    }
+    button.act:hover { background: #e8e8e8; }
+    .hint { font-size: 0.65rem; color: #aaa; margin-top: 2px; line-height: 1.3; }
+    #valence-msg { font-size: 0.72rem; min-height: 1.2em; }
+
+    /* ── Canvas area ─────────────────────────────────────────────────── */
+    .canvas-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #fff;
+    }
+    #canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+
+    /* ── Footer / SMILES bar ─────────────────────────────────────────── */
+    .footer {
+      background: #fff;
+      border-top: 1px solid #ddd;
+      padding: 0.35rem 0.7rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-shrink: 0;
+      height: 38px;
+    }
+    .footer label { font-size: 0.78rem; color: #666; white-space: nowrap; }
+    .footer input[type=text] {
+      flex: 1;
+      font-family: monospace;
+      font-size: 0.88rem;
+      padding: 0.2rem 0.45rem;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      outline: none;
+    }
+    .footer input:focus { border-color: #4488cc; }
+    .footer button {
+      padding: 0.2rem 0.55rem;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      background: #f7f7f7;
+      cursor: pointer;
+      font-size: 0.8rem;
+      white-space: nowrap;
+    }
+    .footer button:hover { background: #e8e8e8; }
+    #atom-status { font-size: 0.75rem; color: #888; white-space: nowrap; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>chem-wasm-lens — Structure Editor</h1>
+  <a href="index.html">[ demo index ]</a>
+  <a href="smiles_svg.html">[ SMILES → SVG ]</a>
+  <a href="viewer.html">[ 3D viewer ]</a>
+  <span id="hdr-status">loading wasm…</span>
+</header>
+
+<div class="workspace">
+  <aside class="sidebar">
+
+    <div>
+      <div class="sec-label">Mode</div>
+      <div class="btn-row">
+        <button class="tb on" id="mode-draw"   title="Draw atoms & bonds (D)">Draw</button>
+        <button class="tb"    id="mode-select" title="Select & move (S)">Sel</button>
+        <button class="tb"    id="mode-erase"  title="Erase atoms & bonds (E)">Erase</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">Element</div>
+      <div class="btn-row" id="elem-row">
+        <button class="tb on" data-elem="C">C</button>
+        <button class="tb"    data-elem="N">N</button>
+        <button class="tb"    data-elem="O">O</button>
+        <button class="tb"    data-elem="S">S</button>
+        <button class="tb"    data-elem="P">P</button>
+        <button class="tb"    data-elem="F">F</button>
+        <button class="tb"    data-elem="Cl">Cl</button>
+        <button class="tb"    data-elem="Br">Br</button>
+        <button class="tb"    data-elem="I">I</button>
+        <button class="tb"    data-elem="H">H</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">Bond Order</div>
+      <div class="btn-row" id="bond-row">
+        <button class="tb on" data-bond="1" title="Single bond">—</button>
+        <button class="tb"    data-bond="2" title="Double bond">=</button>
+        <button class="tb"    data-bond="3" title="Triple bond">≡</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">Rings</div>
+      <div class="btn-row">
+        <button class="tb" data-ring="3" title="3-membered ring">3</button>
+        <button class="tb" data-ring="4" title="4-membered ring">4</button>
+        <button class="tb" data-ring="5" title="5-membered ring">5</button>
+        <button class="tb" data-ring="6" title="6-membered ring">6</button>
+        <button class="tb" data-ring="7" title="7-membered ring">7</button>
+        <button class="tb" data-ring="8" title="8-membered ring">8</button>
+      </div>
+      <div class="hint">Select 2 bonded atoms → fuse<br>No selection → place at center</div>
+    </div>
+
+    <div>
+      <div class="sec-label">Load preset</div>
+      <div class="btn-row">
+        <button class="tb" data-preset="c1ccccc1"       title="Benzene">Bz</button>
+        <button class="tb" data-preset="c1ccncc1"       title="Pyridine">Py</button>
+        <button class="tb" data-preset="C1CCCCC1"       title="Cyclohexane">Cy6</button>
+        <button class="tb" data-preset="c1ccc2ccccc2c1" title="Naphthalene">Nph</button>
+        <button class="tb" data-preset="CC(=O)O"        title="Acetic acid">AcOH</button>
+        <button class="tb" data-preset="CN1C=NC2=C1C(=O)N(C(=O)N2C)C" title="Caffeine">Caff</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="sec-label">Actions</div>
+      <button class="act" id="act-undo">Undo  <span style="color:#aaa">Ctrl+Z</span></button>
+      <button class="act" id="act-clear">Clear all</button>
+      <button class="act" id="act-norm">Normalize bonds</button>
+      <button class="act" id="act-center">Center view</button>
+      <button class="act" id="act-flip-h">Flip horizontal</button>
+      <button class="act" id="act-flip-v">Flip vertical</button>
+      <button class="act" id="act-rot">Rotate 90°</button>
+      <button class="act" id="act-valence">Check valence</button>
+      <div id="valence-msg"></div>
+    </div>
+
+  </aside>
+
+  <div class="canvas-wrap">
+    <canvas id="canvas"></canvas>
+  </div>
+</div>
+
+<div class="footer">
+  <label>SMILES:</label>
+  <input type="text" id="smiles-in" placeholder="Paste SMILES to load…" autocomplete="off" spellcheck="false" />
+  <button id="btn-load">Load</button>
+  <button id="btn-export">Export</button>
+  <button id="btn-copy" title="Copy SMILES to clipboard">Copy</button>
+  <span id="atom-status"></span>
+</div>
+
+<script type="module">
+  import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens/dist/chem-wasm-lens.esm.js';
+
+  const { MolecularSystem } = await loadChem();
+  document.getElementById('hdr-status').textContent = '';
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function newEmpty() {
+    const m = MolecularSystem.from_smiles('C');
+    m.remove_atom(0);
+    return m;
+  }
+
+  // ── State ────────────────────────────────────────────────────────────────
+  let mol       = newEmpty();
+  let mode      = 'draw';     // 'draw' | 'select' | 'erase'
+  let element   = 'C';
+  let bondOrder = 1;
+  let selected  = new Set();  // atom indices
+  let valErrors = new Set();  // valence-violation atom indices
+  let history   = [];         // SDF snapshots for undo (max 60)
+
+  // drag state:
+  //   { type:'bond_draw', fromAtom, curX, curY }
+  //   { type:'atom_drag', lastX, lastY, savedSdf, moved }
+  //   { type:'rect_sel',  startX, startY, curX, curY }
+  let drag = null;
+
+  function saveHist() {
+    history.push(mol.to_sdf_string());
+    if (history.length > 60) history.shift();
+  }
+
+  function undo() {
+    if (!history.length) return;
+    const sdf = history.pop();
+    try {
+      mol = (sdf && sdf.includes('M  END'))
+        ? MolecularSystem.from_sdf_string(sdf)
+        : newEmpty();
+    } catch { mol = newEmpty(); }
+    selected.clear();
+    valErrors.clear();
+    drag = null;
+    redraw();
+    updateStatus();
+  }
+
+  function deleteSelected() {
+    if (!selected.size) return;
+    saveHist();
+    const desc = [...selected].sort((a, b) => b - a);
+    for (const idx of desc) mol.remove_atom(idx);
+    selected.clear();
+    valErrors.clear();
+    redraw();
+    updateStatus();
+  }
+
+  // ── Canvas & transform ───────────────────────────────────────────────────
+  const canvas = document.getElementById('canvas');
+  const ctx    = canvas.getContext('2d');
+  let scale = 60;  // px per Å
+  let panX  = 400, panY = 300;
+
+  function resize() {
+    const r = canvas.parentElement.getBoundingClientRect();
+    canvas.width  = r.width;
+    canvas.height = r.height;
+    redraw();
+  }
+  window.addEventListener('resize', resize);
+
+  const toScr = (mx, my) => [mx * scale + panX, my * scale + panY];
+  const toMol = (sx, sy) => [(sx - panX) / scale, (sy - panY) / scale];
+
+  function centerView() {
+    if (!mol.atom_count()) { panX = canvas.width / 2; panY = canvas.height / 2; return; }
+    const b = mol.get_bounds();
+    panX = canvas.width  / 2 - ((b[0] + b[2]) / 2) * scale;
+    panY = canvas.height / 2 - ((b[1] + b[3]) / 2) * scale;
+  }
+
+  // ── Rendering ────────────────────────────────────────────────────────────
+  const CPK = {
+    C:'#222', N:'#3060c8', O:'#cc2222', S:'#bb9900',
+    P:'#dd6600', F:'#22aa44', Cl:'#229944', Br:'#883311', I:'#551188', H:'#888'
+  };
+  const ATOM_R  = 10;   // px – label background radius
+  const SNAP_PX = 18;   // px – atom/bond snap distance
+
+  function bondList() {
+    const list = [];
+    const n = mol.atom_count();
+    for (let i = 0; i < n; i++) {
+      const nb = mol.get_bonds(i);
+      for (let k = 0; k < nb.length; k++) {
+        if (nb[k] > i) list.push({ i, j: nb[k], ord: mol.get_bond_order(i, k) });
+      }
+    }
+    return list;
+  }
+
+  function line(x1, y1, x2, y2) {
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+
+  function drawBond({ i, j, ord }) {
+    const [xi, yi] = toScr(mol.get_x(i), mol.get_y(i));
+    const [xj, yj] = toScr(mol.get_x(j), mol.get_y(j));
+    ctx.strokeStyle = '#333';
+    const dx = xj - xi, dy = yj - yi;
+    const len = Math.hypot(dx, dy) || 1;
+
+    if (ord === 2) {
+      const [nx, ny] = [-dy / len * 2.8, dx / len * 2.8];
+      ctx.lineWidth = 1.5;
+      line(xi-nx, yi-ny, xj-nx, yj-ny);
+      line(xi+nx, yi+ny, xj+nx, yj+ny);
+    } else if (ord === 3) {
+      const [nx, ny] = [-dy / len * 3.2, dx / len * 3.2];
+      ctx.lineWidth = 1.5;
+      line(xi-nx, yi-ny, xj-nx, yj-ny);
+      line(xi,    yi,    xj,    yj);
+      line(xi+nx, yi+ny, xj+nx, yj+ny);
+    } else {
+      ctx.lineWidth = 1.5;
+      line(xi, yi, xj, yj);
+      // aromatic inner dash
+      if (mol.is_aromatic(i) && mol.is_aromatic(j)) {
+        const [nx, ny] = [-dy / len * 3.5, dx / len * 3.5];
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        line(xi+nx, yi+ny, xj+nx, yj+ny);
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  function drawAtom(idx) {
+    const sym = mol.get_symbol(idx);
+    const [sx, sy] = toScr(mol.get_x(idx), mol.get_y(idx));
+    const color = CPK[sym] ?? '#555';
+    const nb = mol.get_bonds(idx);
+    const showLabel = sym !== 'C' || nb.length === 0;
+
+    // Error ring
+    if (valErrors.has(idx)) {
+      ctx.beginPath(); ctx.arc(sx, sy, ATOM_R + 5, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(200,40,40,0.55)'; ctx.lineWidth = 3; ctx.stroke();
+    }
+    // Selection ring
+    if (selected.has(idx)) {
+      ctx.beginPath(); ctx.arc(sx, sy, ATOM_R + 5, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(40,120,220,0.65)'; ctx.lineWidth = 2.5; ctx.stroke();
+    }
+
+    if (showLabel) {
+      ctx.beginPath(); ctx.arc(sx, sy, ATOM_R, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.font = `bold ${sym.length > 1 ? 10 : 13}px system-ui`;
+      ctx.fillStyle = color;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(sym, sx, sy);
+    } else {
+      // skeleton C vertex dot
+      ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#333'; ctx.fill();
+    }
+
+    // implicit H count (non-C or isolated C)
+    if (showLabel && sym !== 'H') {
+      const h = mol.implicit_h_count(idx);
+      if (h > 0) {
+        ctx.font = '8px system-ui'; ctx.fillStyle = '#777';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        ctx.fillText(h === 1 ? 'H' : `H${h}`, sx + ATOM_R - 2, sy - ATOM_R + 2);
+      }
+    }
+  }
+
+  function redraw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineWidth = 1.5;
+
+    for (const b of bondList()) drawBond(b);
+    for (let i = 0; i < mol.atom_count(); i++) drawAtom(i);
+
+    // Ghost bond while drawing
+    if (drag?.type === 'bond_draw') {
+      const [sx, sy] = toScr(mol.get_x(drag.fromAtom), mol.get_y(drag.fromAtom));
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(drag.curX, drag.curY);
+      ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+
+    // Selection rect
+    if (drag?.type === 'rect_sel') {
+      const { startX: x1, startY: y1, curX: x2, curY: y2 } = drag;
+      ctx.beginPath(); ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      ctx.strokeStyle = '#4488cc'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.stroke(); ctx.fillStyle = 'rgba(68,136,204,0.06)'; ctx.fill();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // ── Hit testing ──────────────────────────────────────────────────────────
+  function hitAtom(sx, sy) {
+    const [mx, my] = toMol(sx, sy);
+    const tol = SNAP_PX / scale;
+    const idx = mol.closest_atom(mx, my, tol);
+    return (idx == null) ? null : idx;
+  }
+  function hitBond(sx, sy) {
+    const [mx, my] = toMol(sx, sy);
+    const arr = mol.bond_at(mx, my, SNAP_PX / scale);
+    return (arr?.length >= 2) ? [arr[0], arr[1]] : null;
+  }
+
+  function updateStatus() {
+    document.getElementById('atom-status').textContent =
+      `${mol.atom_count()} atoms · ${mol.bond_count()} bonds` +
+      (selected.size ? ` · ${selected.size} selected` : '');
+  }
+
+  // ── Pointer events ───────────────────────────────────────────────────────
+  function canvasXY(e) {
+    const r = canvas.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  }
+
+  canvas.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const [sx, sy] = canvasXY(e);
+    const atom = hitAtom(sx, sy);
+
+    if (mode === 'draw') {
+      if (atom !== null) {
+        drag = { type: 'bond_draw', fromAtom: atom, curX: sx, curY: sy };
+      } else {
+        saveHist();
+        const [mx, my] = toMol(sx, sy);
+        mol.add_atom(element, mx, my);
+        valErrors.clear();
+        redraw(); updateStatus();
+      }
+
+    } else if (mode === 'select') {
+      if (atom !== null) {
+        if (!e.shiftKey && !selected.has(atom)) selected = new Set([atom]);
+        else if (e.shiftKey) selected.has(atom) ? selected.delete(atom) : selected.add(atom);
+        drag = { type: 'atom_drag', lastX: sx, lastY: sy,
+                 savedSdf: mol.to_sdf_string(), moved: false };
+      } else {
+        if (!e.shiftKey) selected.clear();
+        drag = { type: 'rect_sel', startX: sx, startY: sy, curX: sx, curY: sy };
+      }
+      redraw(); updateStatus();
+
+    } else { // erase
+      if (atom !== null) {
+        saveHist();
+        selected.delete(atom);
+        mol.remove_atom(atom);
+        selected = new Set([...selected].map(i => i > atom ? i - 1 : i));
+        valErrors.clear();
+        redraw(); updateStatus();
+      } else {
+        const bond = hitBond(sx, sy);
+        if (bond) {
+          saveHist();
+          mol.remove_bond(bond[0], bond[1]);
+          valErrors.clear();
+          redraw(); updateStatus();
+        }
+      }
+    }
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (!drag) return;
+    const [sx, sy] = canvasXY(e);
+
+    if (drag.type === 'bond_draw') {
+      drag.curX = sx; drag.curY = sy; redraw();
+
+    } else if (drag.type === 'atom_drag' && selected.size) {
+      const dx = (sx - drag.lastX) / scale;
+      const dy = (sy - drag.lastY) / scale;
+      mol.move_atoms(new Uint32Array(selected), dx, dy);
+      drag.lastX = sx; drag.lastY = sy; drag.moved = true;
+      redraw();
+
+    } else if (drag.type === 'rect_sel') {
+      drag.curX = sx; drag.curY = sy; redraw();
+    }
+  });
+
+  canvas.addEventListener('mouseup', e => {
+    if (!drag) return;
+    const [sx, sy] = canvasXY(e);
+
+    if (drag.type === 'bond_draw') {
+      const target = hitAtom(sx, sy);
+      const [sfx, sfy] = toScr(mol.get_x(drag.fromAtom), mol.get_y(drag.fromAtom));
+      const dist = Math.hypot(sx - sfx, sy - sfy);
+
+      if (target === drag.fromAtom || (target === null && dist < 8)) {
+        // click-in-place → change element symbol
+        saveHist();
+        mol.set_atom_symbol(drag.fromAtom, element);
+      } else if (target !== null) {
+        saveHist();
+        mol.add_bond(drag.fromAtom, target, bondOrder);
+      } else {
+        // drag to empty space → new atom + bond
+        saveHist();
+        const [mx, my] = toMol(sx, sy);
+        const newIdx = mol.add_atom(element, mx, my);
+        mol.add_bond(drag.fromAtom, newIdx, bondOrder);
+      }
+      valErrors.clear(); drag = null; redraw(); updateStatus();
+
+    } else if (drag.type === 'atom_drag') {
+      if (drag.moved) { history.push(drag.savedSdf); if (history.length > 60) history.shift(); }
+      drag = null;
+
+    } else if (drag.type === 'rect_sel') {
+      const [mx1, my1] = toMol(drag.startX, drag.startY);
+      const [mx2, my2] = toMol(sx, sy);
+      const arr = mol.select_atoms_in_rect(mx1, my1, mx2, my2);
+      if (e.shiftKey) arr.forEach(i => selected.add(i));
+      else selected = new Set(arr);
+      drag = null; redraw(); updateStatus();
+    }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (drag?.type === 'bond_draw' || drag?.type === 'rect_sel') {
+      drag = null; redraw();
+    }
+  });
+
+  // scroll-wheel zoom
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const [sx, sy] = canvasXY(e);
+    const [mx, my] = toMol(sx, sy);
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    scale = Math.max(20, Math.min(200, scale * factor));
+    panX = sx - mx * scale;
+    panY = sy - my * scale;
+    redraw();
+  }, { passive: false });
+
+  // ── Keyboard ─────────────────────────────────────────────────────────────
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
+    if (e.key === 'Delete' || e.key === 'Backspace') { deleteSelected(); return; }
+    if (e.key === 'd' || e.key === 'D') setMode('draw');
+    if (e.key === 's' || e.key === 'S') setMode('select');
+    if (e.key === 'e' || e.key === 'E') setMode('erase');
+  });
+
+  // ── Mode switching ────────────────────────────────────────────────────────
+  function setMode(m) {
+    mode = m; drag = null;
+    document.querySelectorAll('[id^="mode-"]').forEach(b => b.classList.remove('on'));
+    document.getElementById(`mode-${m}`).classList.add('on');
+    canvas.style.cursor = m === 'select' ? 'default' : m === 'erase' ? 'cell' : 'crosshair';
+    if (m !== 'select') { selected.clear(); redraw(); updateStatus(); }
+  }
+  ['draw','select','erase'].forEach(m =>
+    document.getElementById(`mode-${m}`).addEventListener('click', () => setMode(m)));
+
+  // ── Element palette ───────────────────────────────────────────────────────
+  document.querySelectorAll('[data-elem]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      element = btn.dataset.elem;
+      document.querySelectorAll('[data-elem]').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      setMode('draw');
+    }));
+
+  // ── Bond order ────────────────────────────────────────────────────────────
+  document.querySelectorAll('[data-bond]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      bondOrder = +btn.dataset.bond;
+      document.querySelectorAll('[data-bond]').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+    }));
+
+  // ── Ring templates ────────────────────────────────────────────────────────
+  document.querySelectorAll('[data-ring]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const n = +btn.dataset.ring;
+      saveHist();
+      const sel = [...selected];
+      if (sel.length === 2) {
+        const a = sel[0], b = sel[1];
+        const nb = mol.get_bonds(a);
+        if ([...nb].includes(b)) {
+          mol.attach_ring_to_bond(a, b, n);
+          selected.clear(); valErrors.clear(); redraw(); updateStatus(); return;
+        }
+      }
+      const [cx, cy] = toMol(canvas.width / 2, canvas.height / 2);
+      const atoms = mol.add_ring_template(n, cx, cy, 1.4);
+      selected = new Set(atoms);
+      valErrors.clear(); redraw(); updateStatus();
+    }));
+
+  // ── Preset molecules ──────────────────────────────────────────────────────
+  document.querySelectorAll('[data-preset]').forEach(btn =>
+    btn.addEventListener('click', () => {
+      saveHist();
+      try {
+        mol = MolecularSystem.from_smiles(btn.dataset.preset);
+        mol.compute_2d_coords();
+        selected.clear(); valErrors.clear(); centerView(); redraw(); updateStatus();
+      } catch (err) { console.error(err); }
+    }));
+
+  // ── Action buttons ────────────────────────────────────────────────────────
+  document.getElementById('act-undo').addEventListener('click', undo);
+
+  document.getElementById('act-clear').addEventListener('click', () => {
+    saveHist();
+    mol = newEmpty(); selected.clear(); valErrors.clear();
+    redraw(); updateStatus();
+  });
+
+  document.getElementById('act-norm').addEventListener('click', () => {
+    if (!mol.atom_count()) return;
+    saveHist();
+    mol.normalize_bond_length(1.4);
+    centerView(); redraw();
+  });
+
+  document.getElementById('act-center').addEventListener('click', () => {
+    centerView(); redraw();
+  });
+
+  document.getElementById('act-flip-h').addEventListener('click', () => {
+    if (!mol.atom_count()) return;
+    saveHist();
+    const b = mol.get_bounds();
+    mol.flip_horizontal((b[0] + b[2]) / 2);
+    redraw();
+  });
+
+  document.getElementById('act-flip-v').addEventListener('click', () => {
+    if (!mol.atom_count()) return;
+    saveHist();
+    const b = mol.get_bounds();
+    mol.flip_vertical((b[1] + b[3]) / 2);
+    redraw();
+  });
+
+  document.getElementById('act-rot').addEventListener('click', () => {
+    if (!mol.atom_count()) return;
+    saveHist();
+    const b = mol.get_bounds();
+    mol.rotate_atoms(Math.PI / 2, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2);
+    centerView(); redraw();
+  });
+
+  document.getElementById('act-valence').addEventListener('click', () => {
+    const errs = mol.check_valence();
+    valErrors = new Set(errs);
+    const el = document.getElementById('valence-msg');
+    if (!errs.length) { el.textContent = 'No valence errors'; el.style.color = '#2a7'; }
+    else { el.textContent = `${errs.length} error(s) shown in red`; el.style.color = '#c33'; }
+    redraw();
+  });
+
+  // ── SMILES import / export ────────────────────────────────────────────────
+  const smilesIn = document.getElementById('smiles-in');
+
+  function loadSmiles(s) {
+    s = s.trim();
+    if (!s) return;
+    try {
+      saveHist();
+      mol = MolecularSystem.from_smiles(s);
+      mol.compute_2d_coords();
+      selected.clear(); valErrors.clear(); centerView(); redraw(); updateStatus();
+      smilesIn.value = '';
+    } catch (err) {
+      smilesIn.style.borderColor = '#c33';
+      smilesIn.title = String(err);
+      setTimeout(() => { smilesIn.style.borderColor = ''; smilesIn.title = ''; }, 2000);
+    }
+  }
+
+  document.getElementById('btn-load').addEventListener('click',
+    () => loadSmiles(smilesIn.value));
+  smilesIn.addEventListener('keydown', e => { if (e.key === 'Enter') loadSmiles(smilesIn.value); });
+
+  document.getElementById('btn-export').addEventListener('click', () => {
+    const sdf = mol.to_sdf_string();
+    let smiles = '';
+    if (sdf && sdf.includes('M  END')) {
+      try { smiles = MolecularSystem.from_sdf_string(sdf).to_smiles(); } catch {}
+    }
+    smilesIn.value = smiles || '';
+    if (!smiles) {
+      smilesIn.placeholder = '(could not generate SMILES — try loading a SMILES first)';
+    }
+  });
+
+  document.getElementById('btn-copy').addEventListener('click', () => {
+    const v = smilesIn.value.trim();
+    if (v) navigator.clipboard?.writeText(v).catch(() => {});
+  });
+
+  // ── Bootstrap ─────────────────────────────────────────────────────────────
+  // start with benzene
+  mol = MolecularSystem.from_smiles('c1ccccc1');
+  mol.compute_2d_coords();
+
+  resize();
+  centerView();
+  redraw();
+  updateStatus();
+</script>
+</body>
+</html>
