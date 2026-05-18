@@ -254,6 +254,22 @@
     return MolecularSystem.from_xyz_string('0\n\n');
   }
 
+  // compute_2d_coords adds explicit H atoms; strip them for a clean editor view
+  function stripExplicitH(m) {
+    const toRemove = [];
+    for (let i = 0; i < m.atom_count(); i++) {
+      if (m.get_symbol(i) === 'H') toRemove.push(i);
+    }
+    for (let k = toRemove.length - 1; k >= 0; k--) m.remove_atom(toRemove[k]);
+  }
+
+  function loadFromSmiles(s) {
+    const m = MolecularSystem.from_smiles(s);
+    m.compute_2d_coords();
+    stripExplicitH(m);
+    return m;
+  }
+
   // ── State ────────────────────────────────────────────────────────────────
   let mol       = newEmpty();
   let mode      = 'draw';     // 'draw' | 'select' | 'erase'
@@ -659,8 +675,7 @@
     btn.addEventListener('click', () => {
       saveHist();
       try {
-        mol = MolecularSystem.from_smiles(btn.dataset.preset);
-        mol.compute_2d_coords();
+        mol = loadFromSmiles(btn.dataset.preset);
         selected.clear(); valErrors.clear(); centerView(); redraw(); updateStatus();
       } catch (err) { console.error(err); }
     }));
@@ -726,8 +741,7 @@
     if (!s) return;
     try {
       saveHist();
-      mol = MolecularSystem.from_smiles(s);
-      mol.compute_2d_coords();
+      mol = loadFromSmiles(s);
       selected.clear(); valErrors.clear(); centerView(); redraw(); updateStatus();
       smilesIn.value = '';
     } catch (err) {
@@ -760,8 +774,7 @@
 
   // ── Bootstrap ─────────────────────────────────────────────────────────────
   // start with benzene
-  mol = MolecularSystem.from_smiles('c1ccccc1');
-  mol.compute_2d_coords();
+  mol = loadFromSmiles('c1ccccc1');
 
   resize();
   centerView();
