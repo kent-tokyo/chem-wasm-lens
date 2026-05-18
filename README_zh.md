@@ -57,6 +57,7 @@ RDKit.js（C++ RDKit 的 Wasm 移植版）功能丰富，但 **Bundle 大小超�
 - **键检测** — Cordero 2008 共价半径表（18 种元素）；通过 `compute_bonds()` 按需计算
 - **体素网格空间索引** — 均匀网格将近邻查询加速至平均 O(1)；未构建索引时自动回退到 O(N) 线性扫描
 - **serde JSON 输出** — `get_atom_info()` 和 `get_neighbors_info()` 通过 `serde-wasm-bindgen` 返回结构化 JS 对象
+- **结构式编辑器内核** — 提供原子/键的增删改、环模板、缩环、矩形选择、价键检查等 API，可在浏览器中构建完整的结构式编辑器
 
 ## 状态
 
@@ -67,7 +68,9 @@ RDKit.js（C++ RDKit 的 Wasm 移植版）功能丰富，但 **Bundle 大小超�
 | 2 | 距离查询、半径近邻搜索 | 完成 |
 | 2 | 20k+ 原子的体素网格空间索引 | 完成 |
 | 3 | CI（GitHub Actions: `cargo test`、`clippy`、`wasm-pack build`） | 完成 |
-| 3 | JS/TS 使用示例、浏览器测试、npm 发布、基准测试 | 计划中 |
+| 3 | JS/TS 使用示例、浏览器测试、npm 发布、基准测试 | 完成 |
+| 4 | SMILES、SVG 2D 渲染、SMARTS、指纹、文件格式 I/O | 完成 |
+| 5 | 结构式编辑器内核（P42–P49：23 个方法） | 完成 |
 
 ## 快速开始
 
@@ -158,6 +161,38 @@ const residues = mol.get_residues_within_radius(centerAtom, 5.0);
 console.log(residues); // 例如: ["A:ALA:10", "A:GLY:11", ...]
 ```
 
+## 编辑器内核 API
+
+用于在浏览器中构建结构式编辑器 UI 的编辑原语。
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `add_atom(symbol, x, y)` | `number` | 添加原子，返回新索引 |
+| `remove_atom(idx)` | `void` | 删除原子（自动重映射键索引） |
+| `set_atom_symbol(idx, symbol)` | `void` | 修改元素符号 |
+| `set_atom_position(idx, x, y)` | `void` | 修改 2D 坐标 |
+| `set_atom_charge(idx, charge)` | `void` | 设置形式电荷 |
+| `add_bond(a, b, order)` | `void` | 添加键（若已存在则更新键级） |
+| `remove_bond(a, b)` | `void` | 删除键 |
+| `set_bond_order(a, b, order)` | `void` | 修改键级 |
+| `closest_atom(x, y, tol)` | `number\|undefined` | 命中测试：最近邻原子 |
+| `bond_at(x, y, tol)` | `Uint32Array` | 命中测试：最近邻键 `[a, b]` |
+| `normalize_bond_length(target)` | `void` | 将平均键长缩放至 target |
+| `translate_atoms(dx, dy)` | `void` | 平移所有原子 |
+| `implicit_h_count(idx)` | `number` | 隐式氢数（标准价 − 键级之和） |
+| `add_ring_template(n, cx, cy, bond_len)` | `Uint32Array` | 放置正 n 元环，返回新原子索引 |
+| `attach_ring_to_bond(a, b, n)` | `Uint32Array` | 在键 a–b 上缩合 n 元环 |
+| `get_bounds()` | `Float32Array` | 包围盒 `[min_x, min_y, max_x, max_y]` |
+| `rotate_atoms(angle, cx, cy)` | `void` | 绕点 (cx,cy) 旋转所有原子 |
+| `flip_horizontal(cx)` | `void` | 以 x=cx 为轴水平镜像 |
+| `flip_vertical(cy)` | `void` | 以 y=cy 为轴垂直镜像 |
+| `select_atoms_in_rect(x1, y1, x2, y2)` | `Uint32Array` | 矩形框选（自动规范化） |
+| `move_atoms(indices, dx, dy)` | `void` | 仅平移指定原子 |
+| `check_valence()` | `Uint32Array` | 返回键级超出标准价的原子索引 |
+| `copy_atoms(indices)` | `MolecularSystem` | 将原子子集提取为新实例 |
+
+---
+
 ## 架构
 
 ```
@@ -181,7 +216,11 @@ src/lib.rs
     ├── 键检测:     compute_bonds(), get_bonds(), bond_count(), has_bonds_computed()
     ├── 空间查询:   distance(), get_atoms_within_radius(), get_residues_within_radius()
     ├── 空间索引:   build_spatial_index(), has_spatial_index()
-    └── JSON 输出:  get_atom_info() → JsValue, get_neighbors_info() → JsValue
+    ├── JSON 输出:  get_atom_info() → JsValue, get_neighbors_info() → JsValue
+    └── 编辑器:     add/remove_atom, add/remove_bond, set_atom_*, set_bond_order,
+                    implicit_h_count, add_ring_template, attach_ring_to_bond,
+                    get_bounds, rotate_atoms, flip_*, select_atoms_in_rect,
+                    move_atoms, check_valence, copy_atoms
 ```
 
 **主要设计决策：**

@@ -95,6 +95,7 @@ console.log(`phi = ${mol.dihedral(0, 1, 2, 3).toFixed(1)}°`);
 | SMARTS substructure | Yes | Yes | No |
 | Fingerprint (ECFP4) + Tanimoto | Yes | Yes | No |
 | Lipinski / ADMET descriptors | Yes | Yes | No |
+| Structure editor kernel | **Yes** | No | No |
 
 Best for: **structural biology**, **cheminformatics**, **educational tools** — where you need real molecular analysis in the browser without a 10 MB dependency.
 
@@ -180,6 +181,33 @@ Supported SMARTS primitives: element symbols (`C`, `c`, `N`, `O` …), atomic nu
 |--------|---------|-------|
 | `chain_breaks(ca_cutoff)` | `ChainBreakRow[]` | Sequence gaps or Cα–Cα > cutoff Å |
 | `ramachandran_outliers()` | `RamachandranOutlierRow[]` | φ/ψ outside α/β/left-hand helix regions |
+
+### Editor kernel (structure editor primitives)
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `add_atom(symbol, x, y)` | `number` | Add atom at 2D position; returns new index |
+| `remove_atom(idx)` | `void` | Remove atom and remap all bond indices |
+| `set_atom_symbol(idx, symbol)` | `void` | Change element |
+| `set_atom_position(idx, x, y)` | `void` | Update 2D coordinates |
+| `set_atom_charge(idx, charge)` | `void` | Set formal charge |
+| `add_bond(a, b, order)` | `void` | Add bond or update order if bond already exists |
+| `remove_bond(a, b)` | `void` | Remove bond |
+| `set_bond_order(a, b, order)` | `void` | Change bond order only |
+| `closest_atom(x, y, tol)` | `number\|undefined` | Hit-test: nearest atom within tolerance |
+| `bond_at(x, y, tol)` | `Uint32Array` | Hit-test: `[a, b]` of nearest bond, or empty |
+| `normalize_bond_length(target)` | `void` | Scale all coords so average bond = target |
+| `translate_atoms(dx, dy)` | `void` | Shift all atoms |
+| `implicit_h_count(idx)` | `number` | Standard-valence − bond-order sum; −1 for unknown elements |
+| `add_ring_template(n, cx, cy, bond_len)` | `Uint32Array` | Place regular n-membered ring; returns new atom indices |
+| `attach_ring_to_bond(a, b, n)` | `Uint32Array` | Fuse n-membered ring onto bond a–b; returns new atom indices |
+| `get_bounds()` | `Float32Array` | `[min_x, min_y, max_x, max_y]`; empty if no atoms |
+| `rotate_atoms(angle, cx, cy)` | `void` | Rotate all atoms by angle radians around (cx, cy) |
+| `flip_horizontal(cx)` | `void` | Mirror all atoms across the vertical axis x = cx |
+| `flip_vertical(cy)` | `void` | Mirror all atoms across the horizontal axis y = cy |
+| `select_atoms_in_rect(x1, y1, x2, y2)` | `Uint32Array` | Rubber-band selection (rectangle auto-normalised) |
+| `move_atoms(indices, dx, dy)` | `void` | Translate only the specified atoms |
+| `check_valence()` | `Uint32Array` | Indices of atoms whose bond-order sum exceeds standard valence |
+| `copy_atoms(indices)` | `MolecularSystem` | Extract atom subset as new instance; copies intra-selection bonds |
 
 ---
 
@@ -348,7 +376,7 @@ const neighbors: AtomInfo[] = mol.get_neighbors_info(0, 5.0);
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
 
-# Native unit tests (274 tests)
+# Native unit tests (314 tests)
 cargo test
 
 # Linting
@@ -399,7 +427,12 @@ src/lib.rs
     ├── Spatial:    build_spatial_index, get_atoms_within_radius,
     │               get_residues_within_radius, get_neighbors_info
     ├── 2D layout:  compute_2d_coords, to_svg_string, is_aromatic
-    └── Export:     get_positions_flat, get_symbols_json, get_atom_info
+    ├── Export:     get_positions_flat, get_symbols_json, get_atom_info
+    └── Editor:     add/remove_atom, add/remove_bond, set_atom_*, set_bond_order,
+                    closest_atom, bond_at, normalize_bond_length, translate_atoms,
+                    implicit_h_count, add_ring_template, attach_ring_to_bond,
+                    get_bounds, rotate_atoms, flip_horizontal, flip_vertical,
+                    select_atoms_in_rect, move_atoms, check_valence, copy_atoms
 ```
 
 **Key design decisions**

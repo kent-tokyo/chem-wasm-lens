@@ -57,6 +57,7 @@ RDKit.js は C++ の RDKit を Wasm ポートしたもので、機能は豊富�
 - **ボンド検出** — Cordero 2008 の共有結合半径テーブル（18 元素）。`compute_bonds()` でオンデマンドに計算
 - **ボクセルグリッド空間インデックス** — 均一グリッドにより近傍クエリを平均 O(1) に高速化。インデックス未構築時は O(N) 線形探索にフォールバック
 - **serde JSON 出力** — `get_atom_info()` と `get_neighbors_info()` が `serde-wasm-bindgen` を介して構造化 JS オブジェクトを返す
+- **構造式エディタカーネル** — 原子・結合の追加・削除・変更、環テンプレート、縮環、矩形選択、バレンスチェックなど、ブラウザ上で動く構造式エディタを構築するための API セットを提供
 
 ## ステータス
 
@@ -67,7 +68,9 @@ RDKit.js は C++ の RDKit を Wasm ポートしたもので、機能は豊富�
 | 2 | 距離クエリ・半径ベースの近傍探索 | 完了 |
 | 2 | 20k+ 原子向けのボクセルグリッド空間インデックス | 完了 |
 | 3 | CI（GitHub Actions: `cargo test`・`clippy`・`wasm-pack build`） | 完了 |
-| 3 | JS/TS 使用例・ブラウザテスト・npm 公開・ベンチマーク | 計画中 |
+| 3 | JS/TS 使用例・ブラウザテスト・npm 公開・ベンチマーク | 完了 |
+| 4 | SMILES・SVG 2D 描画・SMARTS・フィンガープリント・ファイル形式 I/O | 完了 |
+| 5 | 構造式エディタカーネル（P42–P49: 23 メソッド） | 完了 |
 
 ## クイックスタート
 
@@ -158,6 +161,38 @@ const residues = mol.get_residues_within_radius(centerAtom, 5.0);
 console.log(residues); // 例: ["A:ALA:10", "A:GLY:11", ...]
 ```
 
+## エディタカーネル API
+
+構造式エディタ UI をブラウザ内で構築するための編集プリミティブです。
+
+| メソッド | 返り値 | 説明 |
+|---------|--------|------|
+| `add_atom(symbol, x, y)` | `number` | 原子追加（インデックス返却） |
+| `remove_atom(idx)` | `void` | 原子削除（結合インデックス自動再マッピング） |
+| `set_atom_symbol(idx, symbol)` | `void` | 元素変更 |
+| `set_atom_position(idx, x, y)` | `void` | 座標変更 |
+| `set_atom_charge(idx, charge)` | `void` | 形式電荷変更 |
+| `add_bond(a, b, order)` | `void` | 結合追加（既存なら次数更新） |
+| `remove_bond(a, b)` | `void` | 結合削除 |
+| `set_bond_order(a, b, order)` | `void` | 結合次数変更 |
+| `closest_atom(x, y, tol)` | `number\|undefined` | ヒットテスト：最近傍原子 |
+| `bond_at(x, y, tol)` | `Uint32Array` | ヒットテスト：最近傍結合 `[a, b]` |
+| `normalize_bond_length(target)` | `void` | 平均結合長を target に正規化 |
+| `translate_atoms(dx, dy)` | `void` | 全体平行移動 |
+| `implicit_h_count(idx)` | `number` | 暗黙的 H 数（標準原子価 − 結合次数合計） |
+| `add_ring_template(n, cx, cy, bond_len)` | `Uint32Array` | n 員環を配置、新原子インデックスを返す |
+| `attach_ring_to_bond(a, b, n)` | `Uint32Array` | 既存結合に n 員環を縮環 |
+| `get_bounds()` | `Float32Array` | バウンディングボックス `[min_x, min_y, max_x, max_y]` |
+| `rotate_atoms(angle, cx, cy)` | `void` | 点 (cx,cy) を中心に全原子を回転 |
+| `flip_horizontal(cx)` | `void` | 垂直軸 x=cx に鏡映 |
+| `flip_vertical(cy)` | `void` | 水平軸 y=cy に鏡映 |
+| `select_atoms_in_rect(x1, y1, x2, y2)` | `Uint32Array` | 矩形内原子インデックス（自動正規化） |
+| `move_atoms(indices, dx, dy)` | `void` | 指定原子のみ平行移動 |
+| `check_valence()` | `Uint32Array` | バレンス違反原子のインデックス |
+| `copy_atoms(indices)` | `MolecularSystem` | 原子サブセットを新インスタンスとして抽出 |
+
+---
+
 ## アーキテクチャ
 
 ```
@@ -181,7 +216,11 @@ src/lib.rs
     ├── ボンド検出:       compute_bonds(), get_bonds(), bond_count(), has_bonds_computed()
     ├── 空間クエリ:       distance(), get_atoms_within_radius(), get_residues_within_radius()
     ├── 空間インデックス: build_spatial_index(), has_spatial_index()
-    └── JSON 出力:        get_atom_info() → JsValue, get_neighbors_info() → JsValue
+    ├── JSON 出力:        get_atom_info() → JsValue, get_neighbors_info() → JsValue
+    └── エディタ:         add/remove_atom, add/remove_bond, set_atom_*, set_bond_order,
+                          implicit_h_count, add_ring_template, attach_ring_to_bond,
+                          get_bounds, rotate_atoms, flip_*, select_atoms_in_rect,
+                          move_atoms, check_valence, copy_atoms
 ```
 
 **設計上の主な判断：**
