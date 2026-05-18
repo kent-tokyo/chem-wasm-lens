@@ -243,16 +243,15 @@
 </div>
 
 <script type="module">
-  import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens@0.2.0/dist/chem-wasm-lens.esm.js';
+  import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens@0.2.1/dist/chem-wasm-lens.esm.js';
 
   const { MolecularSystem } = await loadChem();
   document.getElementById('hdr-status').textContent = '';
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function newEmpty() {
-    const m = MolecularSystem.from_smiles('C');
-    m.remove_atom(0);
-    return m;
+    // XYZ with 0 atoms → all internal vecs are empty, no remove_atom needed
+    return MolecularSystem.from_xyz_string('0\n\n');
   }
 
   // ── State ────────────────────────────────────────────────────────────────

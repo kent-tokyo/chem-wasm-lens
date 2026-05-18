@@ -6153,14 +6153,14 @@ impl MolecularSystem {
         self.x.remove(idx);
         self.y.remove(idx);
         self.z.remove(idx);
-        self.atom_names.remove(idx);
-        self.residue_names.remove(idx);
-        self.residue_ids.remove(idx);
-        self.chain_ids.remove(idx);
-        self.hetatm_flags.remove(idx);
-        self.occupancies.remove(idx);
-        self.b_factors.remove(idx);
-        self.charges.remove(idx);
+        if idx < self.atom_names.len()     { self.atom_names.remove(idx); }
+        if idx < self.residue_names.len()  { self.residue_names.remove(idx); }
+        if idx < self.residue_ids.len()    { self.residue_ids.remove(idx); }
+        if idx < self.chain_ids.len()      { self.chain_ids.remove(idx); }
+        if idx < self.hetatm_flags.len()   { self.hetatm_flags.remove(idx); }
+        if idx < self.occupancies.len()    { self.occupancies.remove(idx); }
+        if idx < self.b_factors.len()      { self.b_factors.remove(idx); }
+        if idx < self.charges.len()        { self.charges.remove(idx); }
         if idx < self.aromatic_atoms.len() { self.aromatic_atoms.remove(idx); }
         if idx < self.ring_atoms.len() { self.ring_atoms.remove(idx); }
 
