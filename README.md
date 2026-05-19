@@ -11,6 +11,14 @@ An ultra-lightweight molecular analysis kernel in **pure Rust**, compiled to **W
 
 **[Live demo](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D viewer](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [real protein (RCSB)](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [structure editor](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [fingerprints](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D alignment](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
 
+<table>
+<tr>
+<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="280" alt="SMILES SVG demo"></a></td>
+<td align="center"><b>Fingerprint Similarity</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="280" alt="Fingerprint demo"></a></td>
+<td align="center"><b>2D Alignment</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="280" alt="2D alignment demo"></a></td>
+</tr>
+</table>
+
 ---
 
 ## Install
