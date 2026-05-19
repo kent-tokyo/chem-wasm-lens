@@ -82,6 +82,9 @@ pub struct MolecularSystem {
     stereo_centers: std::collections::HashMap<usize, (i8, Option<usize>)>,
     // Atom mapping numbers from SMILES [X:N] notation. 0 = no mapping.
     atom_map: Vec<u32>,
+    // ring_sizes_per_atom[i] = sizes of SSSR rings containing atom i.
+    // Populated by compute_rings() after enumerate_rings().
+    ring_sizes_per_atom: Vec<Vec<u8>>,
 }
 
 /// Maximum atoms accepted from user input. Prevents OOM from maliciously crafted files.
@@ -2204,6 +2207,18 @@ impl MolecularSystem {
                 }
             }
         }
+
+        // Populate ring_sizes_per_atom from SSSR rings
+        let rings = self.enumerate_rings();
+        self.ring_sizes_per_atom = vec![Vec::new(); n];
+        for ring in &rings {
+            let sz = ring.len() as u8;
+            for &a in ring {
+                if a < n {
+                    self.ring_sizes_per_atom[a].push(sz);
+                }
+            }
+        }
     }
 
     /// Returns true if `compute_rings()` has been called on this system.
@@ -3466,6 +3481,9 @@ struct SmartsAtom {
     h_count: Option<u8>,     // min H-neighbor count
     charge: Option<i8>,
     in_ring: Option<bool>,
+    ring_size: Option<u8>,    // [r5] = in ring of exactly this size
+    degree: Option<u8>,       // [D2] = exactly 2 heavy-atom bonds
+    connectivity: Option<u8>, // [X3] = total bond count == 3
 }
 
 struct SmartsGraph {
@@ -3570,25 +3588,39 @@ fn parse_smarts(input: &str) -> Option<SmartsGraph> {
                     atom.in_ring = Some(true);
                     atom.is_any = true;
                     pos += 1;
+                } else if pos < n && chars[pos] == 'r' {
+                    // [r] / [r5] / [r6] = ring-size SMARTS (must be before element parsing)
+                    pos += 1;
+                    if pos < n && chars[pos].is_ascii_digit() {
+                        let mut sz = 0u8;
+                        while pos < n && chars[pos].is_ascii_digit() {
+                            sz = sz.saturating_mul(10).saturating_add(chars[pos] as u8 - b'0');
+                            pos += 1;
+                        }
+                        atom.ring_size = Some(sz);
+                    } else {
+                        atom.in_ring = Some(true);
+                    }
+                    atom.is_any = true;
                 } else if pos < n && chars[pos].is_ascii_alphabetic() && chars[pos] != 'h' {
                     let aromatic_flag = chars[pos].is_lowercase();
                     let mut sym = chars[pos].to_uppercase().to_string();
                     pos += 1;
                     // Two-letter elements (Cl, Br, Si, Sn)
-                    if pos < n && chars[pos].is_ascii_lowercase() && chars[pos] != 'h' {
-                        if matches!(
+                    if pos < n && chars[pos].is_ascii_lowercase() && chars[pos] != 'h'
+                        && matches!(
                             (sym.as_str(), chars[pos]),
                             ("C", 'l') | ("B", 'r') | ("S", 'i') | ("S", 'n') | ("Z", 'n') | ("F", 'e') | ("N", 'i') | ("C", 'u') | ("M", 'g') | ("P", 'd')
-                        ) {
-                            sym.push(chars[pos]);
-                            pos += 1;
-                        }
+                        )
+                    {
+                        sym.push(chars[pos]);
+                        pos += 1;
                     }
                     atom.symbol = Some(sym);
                     atom.aromatic = Some(aromatic_flag);
                 }
 
-                // Remaining bracket content: H count, charge
+                // Remaining bracket content: H count, charge, ring size, degree, connectivity
                 while pos < n && chars[pos] != ']' {
                     match chars[pos] {
                         'H' => {
@@ -3601,6 +3633,37 @@ fn parse_smarts(input: &str) -> Option<SmartsGraph> {
                                 1
                             };
                             atom.h_count = Some(cnt);
+                        }
+                        'r' => {
+                            pos += 1;
+                            if pos < n && chars[pos].is_ascii_digit() {
+                                let mut sz = 0u8;
+                                while pos < n && chars[pos].is_ascii_digit() {
+                                    sz = sz.saturating_mul(10).saturating_add(chars[pos] as u8 - b'0');
+                                    pos += 1;
+                                }
+                                atom.ring_size = Some(sz);
+                            } else {
+                                atom.in_ring = Some(true);
+                            }
+                        }
+                        'D' => {
+                            pos += 1;
+                            let mut d = 0u8;
+                            while pos < n && chars[pos].is_ascii_digit() {
+                                d = d.saturating_mul(10).saturating_add(chars[pos] as u8 - b'0');
+                                pos += 1;
+                            }
+                            atom.degree = Some(d);
+                        }
+                        'X' => {
+                            pos += 1;
+                            let mut xv = 0u8;
+                            while pos < n && chars[pos].is_ascii_digit() {
+                                xv = xv.saturating_mul(10).saturating_add(chars[pos] as u8 - b'0');
+                                pos += 1;
+                            }
+                            atom.connectivity = Some(xv);
                         }
                         '+' => {
                             pos += 1;
@@ -3751,6 +3814,34 @@ fn smarts_atom_base_match(q: &SmartsAtom, mol: &MolecularSystem, i: usize) -> bo
     // Ring membership
     if let Some(need_ring) = q.in_ring {
         if mol.ring_atoms.get(i).copied().unwrap_or(false) != need_ring {
+            return false;
+        }
+    }
+    // Ring size [r5] / [r6]
+    if let Some(need_sz) = q.ring_size {
+        let in_size = mol.ring_sizes_per_atom
+            .get(i)
+            .map(|v| v.contains(&need_sz))
+            .unwrap_or(false);
+        if !in_size {
+            return false;
+        }
+    }
+    // Heavy-atom degree [D2]
+    if let Some(need_deg) = q.degree {
+        let deg = mol.bonds.get(i)
+            .map(|nb| nb.iter()
+                .filter(|&&j| mol.symbols.get(j).map(|s| s != "H").unwrap_or(true))
+                .count() as u8)
+            .unwrap_or(0);
+        if deg != need_deg {
+            return false;
+        }
+    }
+    // Total connectivity [X3]
+    if let Some(need_x) = q.connectivity {
+        let xval = mol.bonds.get(i).map(|nb| nb.len() as u8).unwrap_or(0);
+        if xval != need_x {
             return false;
         }
     }
@@ -4038,6 +4129,7 @@ impl MolecularSystem {
             aromatic_atoms: Vec::new(),
             stereo_centers: std::collections::HashMap::new(),
             atom_map: Vec::new(),
+            ring_sizes_per_atom: Vec::new(),
         }
     }
 
@@ -4143,6 +4235,15 @@ impl MolecularSystem {
             Vec::new()
         };
 
+        let has_ring_sizes = !self.ring_sizes_per_atom.is_empty();
+        let ring_sizes_per_atom_new: Vec<Vec<u8>> = if has_ring_sizes {
+            indices.iter().map(|&old_i| {
+                self.ring_sizes_per_atom.get(old_i).cloned().unwrap_or_default()
+            }).collect()
+        } else {
+            Vec::new()
+        };
+
         let mut mol = MolecularSystem::new_empty();
         mol.symbols = symbols;
         mol.x = x;
@@ -4159,6 +4260,7 @@ impl MolecularSystem {
         mol.b_factors = b_factors;
         mol.charges = charges;
         mol.atom_map = atom_map_new;
+        mol.ring_sizes_per_atom = ring_sizes_per_atom_new;
         mol.stereo_centers = {
             let mut sc = std::collections::HashMap::new();
             for (&old_i, &(desc, from)) in &self.stereo_centers {
@@ -6101,6 +6203,7 @@ pub struct Reaction {
     reactants:  Vec<MolecularSystem>,
     products:   Vec<MolecularSystem>,
     reagents:   Vec<MolecularSystem>,
+    #[allow(dead_code)]
     conditions: Vec<String>,
 }
 
@@ -6629,7 +6732,7 @@ impl MolecularSystem {
     /// Returns the indices of the newly added atoms.
     /// No-op (empty result) if n < 3.
     pub fn add_ring_template(&mut self, n: u32, cx: f32, cy: f32, bond_length: f32) -> Vec<u32> {
-        if n < 3 || n > 100 { return Vec::new(); }
+        if !(3..=100).contains(&n) { return Vec::new(); }
         use std::f32::consts::PI;
         let n = n as usize;
         let radius = bond_length / (2.0 * (PI / n as f32).sin());
@@ -6662,7 +6765,7 @@ impl MolecularSystem {
         use std::f32::consts::PI;
         let na = a as usize;
         let nb = b as usize;
-        if n < 3 || n > 100 || a == b || na >= self.symbols.len() || nb >= self.symbols.len() {
+        if !(3..=100).contains(&n) || a == b || na >= self.symbols.len() || nb >= self.symbols.len() {
             return Vec::new();
         }
         let xa = self.x[na];
@@ -7304,6 +7407,164 @@ impl MolecularSystem {
         }
 
         true
+    }
+}
+
+// --- Atom Pair Fingerprint helpers ---
+
+fn centroid2d(pts: &[[f32; 2]]) -> [f32; 2] {
+    let n = pts.len() as f32;
+    let mut c = [0f32; 2];
+    for p in pts { c[0] += p[0]; c[1] += p[1]; }
+    [c[0] / n, c[1] / n]
+}
+
+fn atom_pair_fingerprint_bits(mol: &MolecularSystem) -> [u8; 256] {
+    let n = mol.symbols.len();
+    let mut bits = [0u8; 256];
+    if n == 0 {
+        return bits;
+    }
+
+    let atom_hash = |i: usize| -> u32 {
+        let mut h = 0x811c9dc5u32;
+        for b in mol.symbols[i].bytes() {
+            h = fnv_mix(h, b as u32);
+        }
+        let arom = mol.aromatic_atoms.get(i).copied().unwrap_or(false) as u32;
+        let deg = mol.bonds.get(i)
+            .map(|nb| nb.iter()
+                .filter(|&&j| mol.symbols.get(j).map(|s| s != "H").unwrap_or(true))
+                .count())
+            .unwrap_or(0) as u32;
+        h = fnv_mix(h, arom);
+        h = fnv_mix(h, deg);
+        h
+    };
+
+    let hashes: Vec<u32> = (0..n).map(atom_hash).collect();
+
+    for start in 0..n {
+        if mol.symbols[start] == "H" {
+            continue;
+        }
+        let mut visited = vec![u8::MAX; n];
+        visited[start] = 0;
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(u) = queue.pop_front() {
+            let d = visited[u];
+            if d >= 7 {
+                continue;
+            }
+            for &v in mol.bonds.get(u).into_iter().flatten() {
+                if mol.symbols.get(v).map(|s| s == "H").unwrap_or(false) {
+                    continue;
+                }
+                if visited[v] == u8::MAX {
+                    visited[v] = d + 1;
+                    queue.push_back(v);
+                    let (ha, hb) = if hashes[start] <= hashes[v] {
+                        (hashes[start], hashes[v])
+                    } else {
+                        (hashes[v], hashes[start])
+                    };
+                    let mut h = fnv_mix(ha, hb);
+                    h = fnv_mix(h, (d + 1) as u32);
+                    let pos = h % 2048;
+                    bits[(pos / 8) as usize] |= 1 << (pos % 8);
+                }
+            }
+        }
+    }
+    bits
+}
+
+// --- P53: Ring info APIs, Atom Pair FP, Template 2D Alignment ---
+
+#[wasm_bindgen]
+impl MolecularSystem {
+    /// Ring sizes of all SSSR rings containing atom `idx`.
+    /// Requires `compute_bonds()` + `compute_rings()`.
+    pub fn ring_sizes_for_atom(&self, idx: usize) -> Vec<u8> {
+        self.ring_sizes_per_atom.get(idx).cloned().unwrap_or_default()
+    }
+
+    /// Returns `{num_rings, ring_sizes}` for the molecule.
+    /// Requires `compute_bonds()` + `compute_rings()`.
+    pub fn ring_info(&self) -> JsValue {
+        let rings = self.enumerate_rings();
+        let sizes: Vec<usize> = rings.iter().map(|r| r.len()).collect();
+        #[derive(serde::Serialize)]
+        struct RingInfo { num_rings: usize, ring_sizes: Vec<usize> }
+        to_js(&RingInfo { num_rings: rings.len(), ring_sizes: sizes })
+    }
+
+    /// Number of rings containing no aromatic atoms.
+    /// Requires `compute_bonds()` + `compute_rings()`.
+    pub fn aliphatic_ring_count(&self) -> u32 {
+        self.enumerate_rings().into_iter()
+            .filter(|ring| ring.iter().all(|&i|
+                !self.aromatic_atoms.get(i).copied().unwrap_or(false)))
+            .count() as u32
+    }
+
+    /// 2048-bit (256-byte) Atom Pair fingerprint.
+    /// Requires `compute_bonds()`.
+    pub fn fingerprint_atom_pair(&self) -> Vec<u8> {
+        atom_pair_fingerprint_bits(self).to_vec()
+    }
+
+    /// Generates 2D coordinates aligned to a template molecule via substructure match + 2D rotation.
+    /// Calls `compute_2d_coords()` internally. Falls back to normal 2D layout if no match found.
+    pub fn generate_aligned_coords(&mut self, template: &MolecularSystem) {
+        self.compute_2d_coords_data();
+        if template.symbols.is_empty() {
+            return;
+        }
+
+        let tmpl_smiles = template.to_smiles_data();
+        let matches = self.match_smarts_data(&tmpl_smiles);
+        let first_match = match matches.into_iter().next() {
+            Some(m) => m,
+            None => return,
+        };
+
+        let n_tmpl = first_match.len().min(template.symbols.len());
+        if n_tmpl < 2 {
+            return;
+        }
+
+        let ref_pts: Vec<[f32; 2]> = (0..n_tmpl)
+            .map(|qi| [template.x[qi], template.y[qi]])
+            .collect();
+        let mob_pts: Vec<[f32; 2]> = (0..n_tmpl)
+            .map(|qi| { let si = first_match[qi]; [self.x[si], self.y[si]] })
+            .collect();
+
+        let cp_ref = centroid2d(&ref_pts);
+        let cp_mob = centroid2d(&mob_pts);
+
+        let mut h = [[0f32; 2]; 2];
+        for k in 0..n_tmpl {
+            let p = [mob_pts[k][0] - cp_mob[0], mob_pts[k][1] - cp_mob[1]];
+            let q = [ref_pts[k][0] - cp_ref[0], ref_pts[k][1] - cp_ref[1]];
+            for (r, hrow) in h.iter_mut().enumerate() {
+                for (hrc, &qc) in hrow.iter_mut().zip(q.iter()) {
+                    *hrc += p[r] * qc;
+                }
+            }
+        }
+        let angle = (h[0][1] - h[1][0]).atan2(h[0][0] + h[1][1]);
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+
+        let na = self.symbols.len();
+        for i in 0..na {
+            let dx = self.x[i] - cp_mob[0];
+            let dy = self.y[i] - cp_mob[1];
+            self.x[i] = cos_a * dx - sin_a * dy + cp_ref[0];
+            self.y[i] = sin_a * dx + cos_a * dy + cp_ref[1];
+        }
     }
 }
 
@@ -10319,7 +10580,6 @@ $$$$
         assert_eq!(mol.closest_atom(10.0, 10.0, 1.0), None);
     }
 
-    #[test]
     // ── P43 tests ─────────────────────────────────────────────────────────
 
     #[test]
@@ -10818,6 +11078,110 @@ $$$$
         assert_eq!(products.len(), 2, "two F sites → two products");
         for p in &products {
             assert!(p.symbols.iter().any(|s| s == "Cl"), "each product should have Cl");
+        }
+    }
+
+    // ── P53 tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn p53a_ring_size_r6_benzene() {
+        let mut mol = parse_smiles("c1ccccc1").unwrap();
+        mol.compute_rings();
+        let matches = mol.match_smarts_data("[r6]");
+        assert_eq!(matches.len(), 6, "[r6] should match all 6 benzene atoms");
+    }
+
+    #[test]
+    fn p53a_ring_size_r5_not_benzene() {
+        let mut mol = parse_smiles("c1ccccc1").unwrap();
+        mol.compute_rings();
+        let matches = mol.match_smarts_data("[r5]");
+        assert_eq!(matches.len(), 0, "[r5] must not match benzene (6-ring)");
+    }
+
+    #[test]
+    fn p53a_ring_size_r5_cyclopentane() {
+        let mut mol = parse_smiles("C1CCCC1").unwrap();
+        mol.compute_rings();
+        let matches = mol.match_smarts_data("[r5]");
+        assert_eq!(matches.len(), 5, "[r5] should match all 5 cyclopentane carbons");
+    }
+
+    #[test]
+    fn p53a_degree_d1_terminal_carbon() {
+        let mut mol = parse_smiles("CCC").unwrap();
+        mol.compute_rings();
+        let matches = mol.match_smarts_data("[CD1]");
+        assert_eq!(matches.len(), 2, "propane has 2 terminal carbons with D=1");
+    }
+
+    #[test]
+    fn p53a_ring_info_benzene() {
+        let mut mol = parse_smiles("c1ccccc1").unwrap();
+        mol.compute_rings();
+        assert_eq!(mol.aliphatic_ring_count(), 0, "benzene is aromatic, not aliphatic");
+        let sz = mol.ring_sizes_for_atom(0);
+        assert!(sz.contains(&6), "atom 0 in benzene should be in ring of size 6");
+    }
+
+    #[test]
+    fn p53b_atom_pair_length() {
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        assert_eq!(mol.fingerprint_atom_pair().len(), 256);
+    }
+
+    #[test]
+    fn p53b_atom_pair_self_same() {
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        let a = mol.fingerprint_atom_pair();
+        let b = mol.fingerprint_atom_pair();
+        assert_eq!(a, b, "same molecule must produce identical atom pair fp");
+    }
+
+    #[test]
+    fn p53b_atom_pair_benzene_vs_hexane_differ() {
+        let benzene = parse_smiles("c1ccccc1").unwrap();
+        let hexane = parse_smiles("CCCCCC").unwrap();
+        let a = benzene.fingerprint_atom_pair();
+        let b = hexane.fingerprint_atom_pair();
+        assert_ne!(a, b, "aromatic vs aliphatic must produce different atom pair fp");
+    }
+
+    #[test]
+    fn p53c_aligned_coords_count() {
+        let mut template = parse_smiles("c1ccccc1").unwrap();
+        template.compute_rings();
+        template.compute_2d_coords_data();
+        let mut mol = parse_smiles("c1ccc2ccccc2c1").unwrap();
+        mol.compute_rings();
+        mol.generate_aligned_coords(&template);
+        assert_eq!(mol.num_heavy_atoms(), 10, "naphthalene has 10 heavy atoms after alignment");
+    }
+
+    #[test]
+    fn p53c_aligned_coords_no_nan() {
+        let mut template = parse_smiles("c1ccccc1").unwrap();
+        template.compute_rings();
+        template.compute_2d_coords_data();
+        let mut mol = parse_smiles("c1ccc2ccccc2c1").unwrap();
+        mol.compute_rings();
+        mol.generate_aligned_coords(&template);
+        for i in 0..mol.atom_count() {
+            assert!(mol.x[i].is_finite(), "x[{}] should be finite", i);
+            assert!(mol.y[i].is_finite(), "y[{}] should be finite", i);
+        }
+    }
+
+    #[test]
+    fn p53c_aligned_no_match_still_valid() {
+        let mut template = parse_smiles("c1ccccc1").unwrap();
+        template.compute_rings();
+        template.compute_2d_coords_data();
+        let mut mol = parse_smiles("CCC").unwrap();
+        mol.generate_aligned_coords(&template);
+        assert_eq!(mol.num_heavy_atoms(), 3, "no match fallback must not drop atoms");
+        for i in 0..mol.atom_count() {
+            assert!(mol.x[i].is_finite());
         }
     }
 }
