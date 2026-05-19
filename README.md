@@ -209,6 +209,28 @@ Supported SMARTS primitives: element symbols (`C`, `c`, `N`, `O` …), atomic nu
 | `check_valence()` | `Uint32Array` | Indices of atoms whose bond-order sum exceeds standard valence |
 | `copy_atoms(indices)` | `MolecularSystem` | Extract atom subset as new instance; copies intra-selection bonds |
 
+### RDKit.js parity — descriptors & analysis
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `largest_fragment()` | `MolecularSystem` | Largest connected component (salt stripping) |
+| `murcko_scaffold()` | `MolecularSystem` | Murcko scaffold as new instance |
+| `num_heavy_atoms()` | `number` | Atom count excluding H |
+| `fraction_csp3()` | `number` | Fraction of sp3 carbons (Fsp3) |
+| `molar_refractivity()` | `number` | Wildman-Crippen MR estimate |
+
+### 3D conformer generation
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `embed_molecule(seed)` | `boolean` | Assigns 3-D coordinates via simplified distance geometry (DG). Bond topology must exist (SMILES/SDF have it automatically; XYZ/PDB need `compute_bonds()` first). `seed=0` uses a default. Returns `false` if fewer than 2 atoms. |
+
+### Reaction execution
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `Reaction.run_reaction(reactant)` | `MolecularSystem[]` | Apply the reaction to each substructure match in `reactant`. Atom-map numbers (`[atom:N]`) in the reaction SMILES specify which atoms are transformed. Returns one product per match site. |
+
 ---
 
 ## Performance (Apple M-series, Wasm)
@@ -376,7 +398,7 @@ const neighbors: AtomInfo[] = mol.get_neighbors_info(0, 5.0);
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
 
-# Native unit tests (314 tests)
+# Native unit tests (326 tests)
 cargo test
 
 # Linting

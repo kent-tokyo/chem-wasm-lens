@@ -80,6 +80,8 @@ pub struct MolecularSystem {
     //   descriptor: 1 = @@ (CW), -1 = @ (CCW).
     //   from_atom: the atom immediately preceding this center in the SMILES chain.
     stereo_centers: std::collections::HashMap<usize, (i8, Option<usize>)>,
+    // Atom mapping numbers from SMILES [X:N] notation. 0 = no mapping.
+    atom_map: Vec<u32>,
 }
 
 /// Maximum atoms accepted from user input. Prevents OOM from maliciously crafted files.
@@ -821,6 +823,7 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
     let mut bonds: Vec<(usize, usize, BondOrder)> = Vec::new();
     let mut aromatic_atoms: Vec<bool> = Vec::new();
     let mut charges: Vec<i32> = Vec::new();
+    let mut atom_maps: Vec<u32> = Vec::new();
     // Stereo centers: atom_index → (descriptor, from_atom)
     let mut stereo_map: std::collections::HashMap<usize, (i8, Option<usize>)> = std::collections::HashMap::new();
 
@@ -943,7 +946,17 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                         pos += 1; sign * 2
                     } else { sign }
                 } else { 0 };
-                // Skip remaining content (atom class, etc.) until ']'
+                // Parse optional atom-map number :[N] and skip remaining until ']'
+                let mut map_num: u32 = 0;
+                if pos < n && chars[pos] == ':' {
+                    pos += 1; // skip ':'
+                    let mut num = 0u32;
+                    while pos < n && chars[pos].is_ascii_digit() {
+                        num = num * 10 + (chars[pos] as u32 - '0' as u32);
+                        pos += 1;
+                    }
+                    map_num = num;
+                }
                 while pos < n && chars[pos] != ']' { pos += 1; }
                 if pos < n { pos += 1; } // skip ']'
 
@@ -951,6 +964,7 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                 aromatic_atoms.push(false);
                 symbols.push(sym);
                 charges.push(atom_charge);
+                atom_maps.push(map_num);
                 if stereo_desc != 0 {
                     stereo_map.insert(atom_idx, (stereo_desc, prev));
                 }
@@ -980,6 +994,7 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                 aromatic_atoms.push(false);
                 symbols.push(sym);
                 charges.push(0);
+                atom_maps.push(0);
                 if let Some(p) = prev {
                     let order = pending_bond.take().unwrap_or(BondOrder::Single);
                     bonds.push((p, atom_idx, order));
@@ -996,6 +1011,7 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                 aromatic_atoms.push(true);
                 symbols.push(sym);
                 charges.push(0);
+                atom_maps.push(0);
                 if let Some(p) = prev {
                     let order = pending_bond.take().unwrap_or_else(|| {
                         if aromatic_atoms.get(p).copied().unwrap_or(false) {
@@ -1090,6 +1106,8 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
 
     // Extend aromatic_atoms to cover implicit H atoms (all false)
     aromatic_atoms.resize(total, false);
+    // Extend atom_maps: non-bracket atoms have map 0; fill to total
+    atom_maps.resize(total, 0);
 
     let mut mol = MolecularSystem::new_empty();
     mol.symbols = all_symbols;
@@ -1101,6 +1119,7 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
     mol.charges = all_charges;
     mol.aromatic_atoms = aromatic_atoms;
     mol.stereo_centers = stereo_map;
+    mol.atom_map = atom_maps;
     Ok(mol)
 }
 
@@ -4018,6 +4037,7 @@ impl MolecularSystem {
             charges: Vec::new(),
             aromatic_atoms: Vec::new(),
             stereo_centers: std::collections::HashMap::new(),
+            atom_map: Vec::new(),
         }
     }
 
@@ -4116,6 +4136,13 @@ impl MolecularSystem {
             }
         }
 
+        let has_atom_map = !self.atom_map.is_empty();
+        let atom_map_new: Vec<u32> = if has_atom_map {
+            indices.iter().map(|&old_i| self.atom_map.get(old_i).copied().unwrap_or(0)).collect()
+        } else {
+            Vec::new()
+        };
+
         let mut mol = MolecularSystem::new_empty();
         mol.symbols = symbols;
         mol.x = x;
@@ -4131,6 +4158,7 @@ impl MolecularSystem {
         mol.occupancies = occupancies;
         mol.b_factors = b_factors;
         mol.charges = charges;
+        mol.atom_map = atom_map_new;
         mol.stereo_centers = {
             let mut sc = std::collections::HashMap::new();
             for (&old_i, &(desc, from)) in &self.stereo_centers {
@@ -5398,6 +5426,7 @@ fn p41_push_atom(mol: &mut MolecularSystem, sym: &str, x: f32, y: f32, charge: i
     mol.hetatm_flags.push(false);
     mol.occupancies.push(1.0);
     mol.b_factors.push(0.0);
+    if !mol.atom_map.is_empty() { mol.atom_map.push(0); }
 }
 
 fn p41_add_bond(mol: &mut MolecularSystem, a: usize, b: usize, order: u8) {
@@ -6098,6 +6127,182 @@ impl Reaction {
     pub fn to_rxn_string(&self)         -> String { reaction_to_rxn_string(self) }
     pub fn to_reaction_smiles(&self)    -> String { reaction_to_smiles(self) }
     pub fn to_cdxml_string(&self)       -> String { reaction_to_cdxml_string(self) }
+
+    /// Apply this single-component reaction to `reactant`.
+    /// Returns a JS Array of product MolecularSystem (one per substructure match).
+    /// Atom-map numbers ([atom:N]) in the reaction SMILES control which atoms are transformed.
+    pub fn run_reaction(&self, reactant: &MolecularSystem) -> js_sys::Array {
+        let arr = js_sys::Array::new();
+        for product in self.run_reaction_data(reactant) {
+            arr.push(&JsValue::from(product));
+        }
+        arr
+    }
+}
+
+impl Reaction {
+    fn run_reaction_data(&self, reactant: &MolecularSystem) -> Vec<MolecularSystem> {
+        let mut results: Vec<MolecularSystem> = Vec::new();
+        let rct_tmpl = match self.reactants.first() {
+            Some(t) => t,
+            None => return results,
+        };
+        let prd_tmpl = match self.products.first() {
+            Some(t) => t,
+            None => return results,
+        };
+
+        // Use reactant-template heavy-atom SMILES as SMARTS to find substructure matches.
+        // to_smiles_data() strips implicit H and traverses in DFS order (which may differ
+        // from the original atom indices). We resolve the ordering by self-matching.
+        let rct_smiles = rct_tmpl.to_smiles_data();
+        if rct_smiles.is_empty() { return results; }
+
+        // Self-match: dfs_to_orig[smarts_i] = original template atom index for SMARTS atom i
+        let dfs_to_orig: Vec<usize> = rct_tmpl
+            .match_smarts_data(&rct_smiles)
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+
+        let n_heavy_tmpl = dfs_to_orig.len();
+        let matches = reactant.match_smarts_data(&rct_smiles);
+
+        for match_indices in &matches {
+            // match_indices[i] = substrate atom index for SMARTS atom i
+            if match_indices.len() < n_heavy_tmpl { continue; }
+
+            // Build atom-map number → substrate copy atom index
+            let mut map_to_copy_idx: std::collections::HashMap<u32, usize> =
+                std::collections::HashMap::new();
+            for (smarts_i, &copy_i) in match_indices.iter().enumerate() {
+                let tmpl_i = dfs_to_orig.get(smarts_i).copied().unwrap_or(smarts_i);
+                let m = rct_tmpl.atom_map.get(tmpl_i).copied().unwrap_or(0);
+                if m != 0 {
+                    map_to_copy_idx.insert(m, copy_i);
+                }
+            }
+
+            // Build reactant-template bond set: (map_a, map_b) pairs (both non-zero)
+            let rct_bond_maps: std::collections::HashSet<(u32, u32)> = {
+                let mut s = std::collections::HashSet::new();
+                for a in 0..rct_tmpl.bonds.len() {
+                    for &b in &rct_tmpl.bonds[a] {
+                        if b > a {
+                            let ma = rct_tmpl.atom_map.get(a).copied().unwrap_or(0);
+                            let mb = rct_tmpl.atom_map.get(b).copied().unwrap_or(0);
+                            if ma != 0 && mb != 0 {
+                                s.insert((ma.min(mb), ma.max(mb)));
+                            }
+                        }
+                    }
+                }
+                s
+            };
+
+            // Build product-template bond set and orders: (map_a, map_b) → order
+            let mut prd_bond_maps: std::collections::HashMap<(u32, u32), u8> =
+                std::collections::HashMap::new();
+            for a in 0..prd_tmpl.bonds.len() {
+                for (k, &b) in prd_tmpl.bonds[a].iter().enumerate() {
+                    if b > a {
+                        let ma = prd_tmpl.atom_map.get(a).copied().unwrap_or(0);
+                        let mb = prd_tmpl.atom_map.get(b).copied().unwrap_or(0);
+                        if ma != 0 && mb != 0 {
+                            let ord = prd_tmpl.bond_orders.get(a)
+                                .and_then(|v| v.get(k)).copied().unwrap_or(1);
+                            prd_bond_maps.insert((ma.min(mb), ma.max(mb)), ord);
+                        }
+                    }
+                }
+            }
+
+            let mut product = reactant.clone();
+
+            // 1. Remove bonds in reactant template not in product template
+            for &(ma, mb) in &rct_bond_maps {
+                if !prd_bond_maps.contains_key(&(ma, mb)) {
+                    if let (Some(&ci_a), Some(&ci_b)) =
+                        (map_to_copy_idx.get(&ma), map_to_copy_idx.get(&mb))
+                    {
+                        product.remove_bond(ci_a as u32, ci_b as u32);
+                    }
+                }
+            }
+
+            // 2. Add/update bonds in product template not in reactant template
+            for (&(ma, mb), &ord) in &prd_bond_maps {
+                if !rct_bond_maps.contains(&(ma, mb)) {
+                    if let (Some(&ci_a), Some(&ci_b)) =
+                        (map_to_copy_idx.get(&ma), map_to_copy_idx.get(&mb))
+                    {
+                        product.add_bond(ci_a as u32, ci_b as u32, ord);
+                    }
+                }
+            }
+
+            // 3. Transform mapped atoms (symbol and charge from product template)
+            let n_prd = prd_tmpl.symbols.len();
+            for pi in 0..n_prd {
+                let m = prd_tmpl.atom_map.get(pi).copied().unwrap_or(0);
+                if m == 0 { continue; }
+                if let Some(&ci) = map_to_copy_idx.get(&m) {
+                    let prd_sym = prd_tmpl.symbols.get(pi).map(|s| s.as_str()).unwrap_or("C");
+                    product.set_atom_symbol(ci as u32, prd_sym);
+                    let prd_chg = prd_tmpl.charges.get(pi).copied().unwrap_or(0);
+                    product.set_atom_charge(ci as u32, prd_chg);
+                }
+            }
+
+            // 4. Add new atoms from product template (atom_map == 0)
+            let mut new_atom_idx: std::collections::HashMap<usize, u32> =
+                std::collections::HashMap::new();
+            for pi in 0..n_prd {
+                let m = prd_tmpl.atom_map.get(pi).copied().unwrap_or(0);
+                if m == 0 {
+                    let sym = prd_tmpl.symbols.get(pi).map(|s| s.as_str()).unwrap_or("C");
+                    let chg = prd_tmpl.charges.get(pi).copied().unwrap_or(0);
+                    let ni = product.add_atom(sym, 0.0, 0.0);
+                    if !product.charges.is_empty() {
+                        if let Some(c) = product.charges.last_mut() { *c = chg; }
+                    }
+                    new_atom_idx.insert(pi, ni);
+                }
+            }
+
+            // 5. Add bonds for new atoms
+            for a_pi in 0..n_prd {
+                let ma = prd_tmpl.atom_map.get(a_pi).copied().unwrap_or(0);
+                for (k, &b_pi) in prd_tmpl.bonds.get(a_pi).into_iter().flatten().enumerate() {
+                    if b_pi <= a_pi { continue; }
+                    let mb = prd_tmpl.atom_map.get(b_pi).copied().unwrap_or(0);
+                    let ord = prd_tmpl.bond_orders.get(a_pi)
+                        .and_then(|v| v.get(k)).copied().unwrap_or(1);
+
+                    let ci_a: Option<u32> = if ma != 0 {
+                        map_to_copy_idx.get(&ma).map(|&i| i as u32)
+                    } else {
+                        new_atom_idx.get(&a_pi).copied()
+                    };
+                    let ci_b: Option<u32> = if mb != 0 {
+                        map_to_copy_idx.get(&mb).map(|&i| i as u32)
+                    } else {
+                        new_atom_idx.get(&b_pi).copied()
+                    };
+
+                    // Only bond if at least one is a new atom (mapped bonds handled above)
+                    if ma == 0 || mb == 0 {
+                        if let (Some(a), Some(b)) = (ci_a, ci_b) {
+                            product.add_bond(a, b, ord);
+                        }
+                    }
+                }
+            }
+
+            results.push(product);
+        }
+        results
+    }
 }
 
 // ── P41: Per-molecule format I/O Wasm methods ────────────────────────────────
@@ -6162,7 +6367,8 @@ impl MolecularSystem {
         if idx < self.b_factors.len()      { self.b_factors.remove(idx); }
         if idx < self.charges.len()        { self.charges.remove(idx); }
         if idx < self.aromatic_atoms.len() { self.aromatic_atoms.remove(idx); }
-        if idx < self.ring_atoms.len() { self.ring_atoms.remove(idx); }
+        if idx < self.ring_atoms.len()     { self.ring_atoms.remove(idx); }
+        if idx < self.atom_map.len()       { self.atom_map.remove(idx); }
 
         // Remove bonds pointing to idx in each neighbor's adjacency list
         for nb in self.bonds[idx].clone() {
@@ -6684,6 +6890,420 @@ impl MolecularSystem {
             }
         }
         out
+    }
+}
+
+// --- P50: RDKit.js parity — convenience methods + descriptors ---
+
+#[wasm_bindgen]
+impl MolecularSystem {
+    /// Returns the largest connected fragment as a new MolecularSystem.
+    /// Useful for salt stripping (pick the main molecule, discard counterions).
+    pub fn largest_fragment(&self) -> MolecularSystem {
+        let n = self.symbols.len();
+        let mut visited = vec![false; n];
+        let mut best: Vec<u32> = Vec::new();
+        for start in 0..n {
+            if visited[start] {
+                continue;
+            }
+            let mut comp: Vec<u32> = Vec::new();
+            let mut stack = vec![start];
+            while let Some(a) = stack.pop() {
+                if visited[a] {
+                    continue;
+                }
+                visited[a] = true;
+                comp.push(a as u32);
+                for &nb in self.bonds.get(a).into_iter().flatten() {
+                    if !visited[nb] {
+                        stack.push(nb);
+                    }
+                }
+            }
+            if comp.len() > best.len() {
+                best = comp;
+            }
+        }
+        best.sort_unstable();
+        self.copy_atoms(&best)
+    }
+
+    /// Returns the Murcko scaffold (ring systems + inter-ring linkers) as a new MolecularSystem.
+    /// Requires `compute_bonds()` + `compute_rings()` first.
+    pub fn murcko_scaffold(&self) -> MolecularSystem {
+        let idx: Vec<u32> = self
+            .murcko_scaffold_indices_data()
+            .into_iter()
+            .map(|i| i as u32)
+            .collect();
+        self.copy_atoms(&idx)
+    }
+
+    /// Number of non-hydrogen atoms.
+    pub fn num_heavy_atoms(&self) -> u32 {
+        self.symbols.iter().filter(|s| s.as_str() != "H").count() as u32
+    }
+
+    /// Fraction of carbons that are sp3 (no double/triple bond, not aromatic).
+    /// Returns 0.0 if the molecule has no carbon atoms.
+    /// Requires `compute_bonds()` first; returns 0.0 if bonds are absent.
+    pub fn fraction_csp3(&self) -> f32 {
+        if self.bonds.is_empty() {
+            return 0.0;
+        }
+        let mut total_c = 0u32;
+        let mut sp3_c = 0u32;
+        for i in 0..self.symbols.len() {
+            if self.symbols[i] != "C" {
+                continue;
+            }
+            total_c += 1;
+            let is_arom = self.aromatic_atoms.get(i).copied().unwrap_or(false);
+            let max_order = self
+                .bond_orders
+                .get(i)
+                .map_or(1u8, |o| o.iter().copied().max().unwrap_or(1));
+            if !is_arom && max_order <= 1 {
+                sp3_c += 1;
+            }
+        }
+        if total_c == 0 {
+            0.0
+        } else {
+            sp3_c as f32 / total_c as f32
+        }
+    }
+
+    /// Approximate molar refractivity (Wildman-Crippen MR, cm³/mol).
+    /// Requires `compute_bonds()` first; returns 0.0 if bonds are absent.
+    /// Accuracy: roughly ±0.5 for typical drug-like molecules.
+    pub fn molar_refractivity(&self) -> f32 {
+        if self.bonds.is_empty() {
+            return 0.0;
+        }
+        (0..self.symbols.len())
+            .map(|i| self.atom_mr_contribution(i))
+            .sum()
+    }
+
+    fn atom_mr_contribution(&self, i: usize) -> f32 {
+        let sym = match self.symbols.get(i) {
+            Some(s) => s.as_str(),
+            None => return 0.0,
+        };
+        if sym == "H" {
+            return 0.0;
+        }
+
+        let h_ct: usize = self.bonds.get(i).map_or(0, |nbrs| {
+            nbrs.iter()
+                .filter(|&&j| self.symbols.get(j).map(|s| s == "H").unwrap_or(false))
+                .count()
+        });
+        let in_ring = self.ring_atoms.get(i).copied().unwrap_or(false);
+        let is_arom = self.aromatic_atoms.get(i).copied().unwrap_or(false);
+        let double_to_o = self.bonds.get(i).is_some_and(|nbrs| {
+            nbrs.iter().enumerate().any(|(k, &j)| {
+                self.symbols.get(j).map(|s| s == "O").unwrap_or(false)
+                    && self
+                        .bond_orders
+                        .get(i)
+                        .and_then(|o| o.get(k))
+                        .copied()
+                        .unwrap_or(1)
+                        == 2
+            })
+        });
+        let max_order = self
+            .bond_orders
+            .get(i)
+            .map_or(1u8, |o| o.iter().copied().max().unwrap_or(1));
+
+        match sym {
+            "C" => {
+                if is_arom || (in_ring && max_order >= 2) {
+                    if h_ct >= 1 { 0.41 } else { 0.29 }
+                } else if double_to_o {
+                    0.25
+                } else if max_order >= 2 {
+                    if h_ct >= 1 { 0.35 } else { 0.21 }
+                } else {
+                    match h_ct {
+                        3 => 0.80,
+                        2 => 0.77,
+                        1 => 0.47,
+                        _ => 0.19,
+                    }
+                }
+            }
+            "N" => match h_ct {
+                2 => 0.99,
+                1 => 0.71,
+                _ => 0.47,
+            },
+            "O" => {
+                if max_order >= 2 { 0.50 } else { 0.25 }
+            }
+            "S" => {
+                if h_ct >= 1 { 1.08 } else { 0.84 }
+            }
+            "F"  => 0.18,
+            "Cl" => 0.60,
+            "Br" => 0.85,
+            "I"  => 1.05,
+            "P"  => 0.80,
+            _    => 0.30,
+        }
+    }
+}
+
+// --- P51: 3D conformer generation via simplified distance geometry ---
+
+#[wasm_bindgen]
+impl MolecularSystem {
+    /// Assigns 3-D coordinates using simplified distance geometry.
+    /// `seed` — LCG seed for reproducibility (0 = default seed 12345).
+    /// Bond topology must be present in self.bonds (SMILES/SDF molecules have it automatically;
+    /// for XYZ/PDB molecules call compute_bonds() first). Returns `false` if n < 2.
+    pub fn embed_molecule(&mut self, seed: u32) -> bool {
+        let n = self.symbols.len();
+        if n < 2 {
+            return false;
+        }
+
+        // LCG state
+        let mut lcg: u32 = if seed == 0 { 12345 } else { seed };
+        let lcg_next = |s: &mut u32| -> f32 {
+            *s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (*s as f32) / (u32::MAX as f32)
+        };
+
+        // Step 1: Build upper/lower distance bounds
+        let mut lo = vec![0f32; n * n];
+        let mut hi = vec![100f32; n * n];
+        // diagonal
+        for i in 0..n {
+            lo[i * n + i] = 0.0;
+            hi[i * n + i] = 0.0;
+        }
+        // vdW clash floor for all pairs
+        for i in 0..n {
+            for j in 0..n {
+                if i != j {
+                    lo[i * n + j] = 1.2;
+                }
+            }
+        }
+        // bonded (1-2) pairs
+        for a in 0..n {
+            for &b in self.bonds.get(a).into_iter().flatten() {
+                if b > a {
+                    let ra = covalent_radius(
+                        self.symbols.get(a).map(|s| s.as_str()).unwrap_or("C"),
+                    ).unwrap_or(0.77);
+                    let rb = covalent_radius(
+                        self.symbols.get(b).map(|s| s.as_str()).unwrap_or("C"),
+                    ).unwrap_or(0.77);
+                    let target = ra + rb + 0.08;
+                    lo[a * n + b] = target * 0.9;
+                    hi[a * n + b] = target * 1.1;
+                    lo[b * n + a] = lo[a * n + b];
+                    hi[b * n + a] = hi[a * n + b];
+                }
+            }
+        }
+        // 1-3 pairs (share a common bonded neighbor)
+        for b in 0..n {
+            let nbrs: Vec<usize> = self.bonds.get(b).into_iter().flatten().copied().collect();
+            for ii in 0..nbrs.len() {
+                for jj in (ii + 1)..nbrs.len() {
+                    let (a, c) = (nbrs[ii], nbrs[jj]);
+                    if hi[a * n + c] > 3.0 {
+                        lo[a * n + c] = 2.0f32.max(lo[a * n + c]);
+                        hi[a * n + c] = 3.0f32.min(hi[a * n + c]);
+                        lo[c * n + a] = lo[a * n + c];
+                        hi[c * n + a] = hi[a * n + c];
+                    }
+                }
+            }
+        }
+
+        // Step 2: Triangle bound smoothing (upper bounds, Floyd-Warshall)
+        for k in 0..n {
+            for i in 0..n {
+                for j in 0..n {
+                    let via = hi[i * n + k] + hi[k * n + j];
+                    if via < hi[i * n + j] {
+                        hi[i * n + j] = via;
+                    }
+                }
+            }
+        }
+        // clamp: lower <= upper
+        for i in 0..n * n {
+            if lo[i] > hi[i] {
+                lo[i] = hi[i];
+            }
+        }
+
+        // Step 3: Sample distance matrix and embed via metric matrix
+        let mut d = vec![0f32; n * n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let v = lo[i * n + j] + lcg_next(&mut lcg) * (hi[i * n + j] - lo[i * n + j]);
+                d[i * n + j] = v;
+                d[j * n + i] = v;
+            }
+        }
+
+        // Gram matrix G[i][j] = (d0i² + d0j² - dij²) / 2  (using atom 0 as reference)
+        // Then center: G[i][j] -= row_mean[i] + col_mean[j] - grand_mean
+        let mut g = vec![0f32; n * n];
+        for i in 0..n {
+            for j in 0..n {
+                // Classic distance geometry: G[i][j] = (d(0,i)² + d(0,j)² - d(i,j)²) / 2
+                let d0i = d[i]; // d[0*n + i] — distance from reference atom 0 to atom i
+                let d0j = d[j]; // d[0*n + j] — distance from reference atom 0 to atom j
+                let dij = d[i * n + j];
+                g[i * n + j] = (d0i * d0i + d0j * d0j - dij * dij) * 0.5;
+            }
+        }
+        // double-center
+        let row_mean: Vec<f32> = (0..n)
+            .map(|i| g[i * n..i * n + n].iter().sum::<f32>() / n as f32)
+            .collect();
+        let grand_mean = row_mean.iter().sum::<f32>() / n as f32;
+        for i in 0..n {
+            for j in 0..n {
+                g[i * n + j] -= row_mean[i] + row_mean[j] - grand_mean;
+            }
+        }
+
+        // Power iteration for top 3 eigenvectors
+        let power_iter = |mat: &[f32], init: &[f32], steps: usize| -> (Vec<f32>, f32) {
+            let nn = init.len();
+            let mut v = init.to_vec();
+            let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-10);
+            for x in &mut v {
+                *x /= norm;
+            }
+            let mut eigenval = 0f32;
+            for _ in 0..steps {
+                let mut w = vec![0f32; nn];
+                for i in 0..nn {
+                    for j in 0..nn {
+                        w[i] += mat[i * nn + j] * v[j];
+                    }
+                }
+                eigenval = w.iter().zip(v.iter()).map(|(a, b)| a * b).sum::<f32>();
+                let norm2 = w.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-10);
+                for x in &mut w {
+                    *x /= norm2;
+                }
+                v = w;
+            }
+            (v, eigenval.max(0.0))
+        };
+
+        // ev1
+        let init1: Vec<f32> = (0..n).map(|_| lcg_next(&mut lcg)).collect();
+        let (ev1, lam1) = power_iter(&g, &init1, 50);
+        // deflate
+        let mut g2 = g.clone();
+        for i in 0..n {
+            for j in 0..n {
+                g2[i * n + j] -= lam1 * ev1[i] * ev1[j];
+            }
+        }
+        // ev2
+        let init2: Vec<f32> = (0..n).map(|_| lcg_next(&mut lcg)).collect();
+        let (ev2, lam2) = power_iter(&g2, &init2, 50);
+        // deflate
+        let mut g3 = g2.clone();
+        for i in 0..n {
+            for j in 0..n {
+                g3[i * n + j] -= lam2 * ev2[i] * ev2[j];
+            }
+        }
+        // ev3
+        let init3: Vec<f32> = (0..n).map(|_| lcg_next(&mut lcg)).collect();
+        let (ev3, lam3) = power_iter(&g3, &init3, 50);
+
+        let s1 = lam1.sqrt();
+        let s2 = lam2.sqrt();
+        let s3 = lam3.sqrt();
+
+        self.x = ev1.iter().map(|v| v * s1).collect();
+        self.y = ev2.iter().map(|v| v * s2).collect();
+        self.z = ev3.iter().map(|v| v * s3).collect();
+
+        // Step 4: Bond stretch gradient descent (200 steps)
+        // Collect bonded pairs with target distances
+        let mut bond_pairs: Vec<(usize, usize, f32)> = Vec::new();
+        for a in 0..n {
+            for &b in self.bonds.get(a).into_iter().flatten() {
+                if b > a {
+                    let ra = covalent_radius(
+                        self.symbols.get(a).map(|s| s.as_str()).unwrap_or("C"),
+                    ).unwrap_or(0.77);
+                    let rb = covalent_radius(
+                        self.symbols.get(b).map(|s| s.as_str()).unwrap_or("C"),
+                    ).unwrap_or(0.77);
+                    let target = ra + rb + 0.08;
+                    bond_pairs.push((a, b, target));
+                }
+            }
+        }
+
+        let step_size = 0.01f32;
+        for _ in 0..200 {
+            let mut gx = vec![0f32; n];
+            let mut gy = vec![0f32; n];
+            let mut gz = vec![0f32; n];
+            for &(a, b, tgt) in &bond_pairs {
+                let dx = self.x[b] - self.x[a];
+                let dy = self.y[b] - self.y[a];
+                let dz = self.z[b] - self.z[a];
+                let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-6);
+                let diff = dist - tgt;
+                // gradient of (dist - tgt)² w.r.t. position a: -2*diff*(unit vec)
+                let ux = dx / dist;
+                let uy = dy / dist;
+                let uz = dz / dist;
+                let g = 2.0 * diff;
+                gx[a] += g * (-ux);
+                gy[a] += g * (-uy);
+                gz[a] += g * (-uz);
+                gx[b] += g * ux;
+                gy[b] += g * uy;
+                gz[b] += g * uz;
+            }
+            // clip grad norm per atom
+            for i in 0..n {
+                let gnorm = (gx[i] * gx[i] + gy[i] * gy[i] + gz[i] * gz[i]).sqrt();
+                if gnorm > 1.0 {
+                    gx[i] /= gnorm;
+                    gy[i] /= gnorm;
+                    gz[i] /= gnorm;
+                }
+                self.x[i] -= step_size * gx[i];
+                self.y[i] -= step_size * gy[i];
+                self.z[i] -= step_size * gz[i];
+            }
+        }
+
+        // Center at origin
+        let cx = self.x.iter().sum::<f32>() / n as f32;
+        let cy = self.y.iter().sum::<f32>() / n as f32;
+        let cz = self.z.iter().sum::<f32>() / n as f32;
+        for i in 0..n {
+            self.x[i] -= cx;
+            self.y[i] -= cy;
+            self.z[i] -= cz;
+        }
+
+        true
     }
 }
 
@@ -10051,6 +10671,153 @@ $$$$
                 let len = (dx * dx + dy * dy).sqrt();
                 assert!((len - target).abs() < 0.01, "bond length {} != target {}", len, target);
             }
+        }
+    }
+
+    // ── P50 tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn p50_largest_fragment_picks_bigger_part() {
+        // Two disconnected fragments: 3-atom chain + 1 isolated atom
+        let mut mol = MolecularSystem::new_empty();
+        let a = mol.add_atom("C", 0.0, 0.0);
+        let b = mol.add_atom("C", 1.4, 0.0);
+        let c = mol.add_atom("C", 2.8, 0.0);
+        mol.add_atom("N", 10.0, 0.0); // isolated, index 3
+        mol.add_bond(a, b, 1);
+        mol.add_bond(b, c, 1);
+        let frag = mol.largest_fragment();
+        assert_eq!(frag.atom_count(), 3);
+    }
+
+    #[test]
+    fn p50_largest_fragment_single_component() {
+        let mol = parse_smiles("CC").unwrap();
+        let frag = mol.largest_fragment();
+        assert_eq!(frag.atom_count(), mol.atom_count());
+    }
+
+    #[test]
+    fn p50_murcko_scaffold_benzene() {
+        let mut mol = parse_smiles("c1ccccc1").unwrap();
+        mol.compute_rings(); // SMILES already has bonds; rings needed for murcko
+        let scaffold = mol.murcko_scaffold();
+        let heavy = (0..scaffold.atom_count())
+            .filter(|&i| scaffold.get_symbol(i).as_deref() != Some("H"))
+            .count();
+        assert_eq!(heavy, 6, "benzene scaffold should have 6 heavy atoms");
+    }
+
+    #[test]
+    fn p50_num_heavy_atoms_methane() {
+        let mol = parse_smiles("C").unwrap();
+        // SMILES 'C' = 1 carbon (H implicit, not stored unless explicit)
+        assert_eq!(mol.num_heavy_atoms(), 1);
+    }
+
+    #[test]
+    fn p50_fraction_csp3_cyclohexane() {
+        let mut mol = parse_smiles("C1CCCCC1").unwrap();
+        mol.compute_bonds();
+        mol.compute_2d_coords();
+        // All 6 C are sp3 in cyclohexane
+        let f = mol.fraction_csp3();
+        assert!(f > 0.99, "expected ~1.0 for cyclohexane, got {}", f);
+    }
+
+    // --- P51 tests ---
+
+    #[test]
+    fn p51_embed_empty_returns_false() {
+        let mut mol = MolecularSystem::new_empty();
+        assert!(!mol.embed_molecule(0), "embed on empty should return false");
+    }
+
+    #[test]
+    fn p51_embed_water_bond_distances() {
+        // SMILES parsing already populates self.bonds; no compute_bonds() needed
+        let mut mol = parse_smiles("O").unwrap();
+        assert!(mol.embed_molecule(42), "embed should succeed for water");
+        let o_idx = (0..mol.atom_count()).find(|&i| mol.get_symbol(i).as_deref() == Some("O")).unwrap();
+        let h_indices: Vec<usize> = (0..mol.atom_count())
+            .filter(|&i| mol.get_symbol(i).as_deref() == Some("H"))
+            .collect();
+        for &h in &h_indices {
+            let dx = mol.get_x(h).unwrap_or(0.0) - mol.get_x(o_idx).unwrap_or(0.0);
+            let dy = mol.get_y(h).unwrap_or(0.0) - mol.get_y(o_idx).unwrap_or(0.0);
+            let dz = mol.get_z(h).unwrap_or(0.0) - mol.get_z(o_idx).unwrap_or(0.0);
+            let d = (dx * dx + dy * dy + dz * dz).sqrt();
+            assert!(d > 0.8 && d < 1.2, "O-H dist should be 0.8–1.2 Å, got {}", d);
+        }
+    }
+
+    #[test]
+    fn p51_embed_benzene_ring_bonds() {
+        // SMILES parsing already populates self.bonds
+        let mut mol = parse_smiles("c1ccccc1").unwrap();
+        assert!(mol.embed_molecule(1), "embed should succeed for benzene");
+        let n = mol.atom_count();
+        for a in 0..n {
+            // check bonds from a
+            let neighbors = mol.bonds.get(a).cloned().unwrap_or_default();
+            for b in neighbors {
+                if b > a && mol.get_symbol(a).as_deref() == Some("C") && mol.get_symbol(b).as_deref() == Some("C") {
+                    let dx = mol.get_x(b).unwrap_or(0.0) - mol.get_x(a).unwrap_or(0.0);
+                    let dy = mol.get_y(b).unwrap_or(0.0) - mol.get_y(a).unwrap_or(0.0);
+                    let dz = mol.get_z(b).unwrap_or(0.0) - mol.get_z(a).unwrap_or(0.0);
+                    let d = (dx * dx + dy * dy + dz * dz).sqrt();
+                    assert!(d > 1.2 && d < 1.7, "C-C bond dist should be 1.2–1.7 Å, got {}", d);
+                }
+            }
+        }
+    }
+
+    // --- P52 tests ---
+
+    #[test]
+    fn p52_atom_map_parsed_from_smiles() {
+        // Verify [C:1]O parses atom maps correctly
+        let mol = parse_smiles("[C:1]O").unwrap();
+        assert_eq!(mol.atom_map.first().copied().unwrap_or(0), 1, "C should have map 1");
+        // O is non-bracket so map should be 0
+        let o_idx = mol.symbols.iter().position(|s| s == "O").unwrap();
+        assert_eq!(mol.atom_map.get(o_idx).copied().unwrap_or(0), 0, "O should have map 0");
+    }
+
+    #[test]
+    fn p52_run_reaction_no_match() {
+        // Reaction: [F:1]>>[Cl:1] (fluoride to chloride)
+        // Substrate: methanol (no fluorine) → no products
+        let rxn = parse_reaction_smiles("[F:1]>>[Cl:1]").expect("parse reaction");
+        let substrate = parse_smiles("CO").unwrap();
+        let products = rxn.run_reaction_data(&substrate);
+        assert_eq!(products.len(), 0, "no match → empty result");
+    }
+
+    #[test]
+    fn p52_run_reaction_transforms_atom() {
+        // Reaction: [F:1]>>[Cl:1] (fluoride → chloride)
+        // Substrate: fluoromethane CH3F → product CH3Cl
+        let rxn = parse_reaction_smiles("[F:1]>>[Cl:1]").expect("parse reaction");
+        let substrate = parse_smiles("CF").unwrap();
+        let products = rxn.run_reaction_data(&substrate);
+        assert_eq!(products.len(), 1, "one match expected");
+        let p = &products[0];
+        let has_cl = p.symbols.iter().any(|s| s == "Cl");
+        let has_f  = p.symbols.iter().any(|s| s == "F");
+        assert!(has_cl, "product should contain Cl");
+        assert!(!has_f, "product should not contain F");
+    }
+
+    #[test]
+    fn p52_run_reaction_multiple_sites() {
+        // Reaction: [F:1]>>[Cl:1] on difluoromethane CF2H2 → 2 matches (both F atoms)
+        let rxn = parse_reaction_smiles("[F:1]>>[Cl:1]").expect("parse reaction");
+        let substrate = parse_smiles("FCF").unwrap();
+        let products = rxn.run_reaction_data(&substrate);
+        assert_eq!(products.len(), 2, "two F sites → two products");
+        for p in &products {
+            assert!(p.symbols.iter().any(|s| s == "Cl"), "each product should have Cl");
         }
     }
 }
