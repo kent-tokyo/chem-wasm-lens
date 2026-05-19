@@ -8,9 +8,14 @@
 
 <table>
 <tr>
-<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="280" alt="SMILES SVG 演示"></a></td>
-<td align="center"><b>指纹相似度</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="280" alt="指纹演示"></a></td>
-<td align="center"><b>2D 对齐</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="280" alt="2D 对齐演示"></a></td>
+<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="260" alt="SMILES SVG 演示"></a></td>
+<td align="center"><b>指纹相似度</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="260" alt="指纹演示"></a></td>
+<td align="center"><b>2D 对齐</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D 对齐演示"></a></td>
+</tr>
+<tr>
+<td align="center"><b>结构编辑器</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html"><img src="docs/screenshots/editor.gif" width="260" alt="结构编辑器演示"></a></td>
+<td align="center"><b>3D 查看器</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html"><img src="docs/screenshots/viewer.gif" width="260" alt="3D 查看器演示"></a></td>
+<td align="center"><b>真实蛋白质 (PDB)</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html"><img src="docs/screenshots/fetch_demo.gif" width="260" alt="真实蛋白质 PDB 演示"></a></td>
 </tr>
 </table>
 

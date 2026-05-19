@@ -13,9 +13,14 @@ An ultra-lightweight molecular analysis kernel in **pure Rust**, compiled to **W
 
 <table>
 <tr>
-<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="280" alt="SMILES SVG demo"></a></td>
-<td align="center"><b>Fingerprint Similarity</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="280" alt="Fingerprint demo"></a></td>
-<td align="center"><b>2D Alignment</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="280" alt="2D alignment demo"></a></td>
+<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="260" alt="SMILES SVG demo"></a></td>
+<td align="center"><b>Fingerprint Similarity</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="260" alt="Fingerprint demo"></a></td>
+<td align="center"><b>2D Alignment</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D alignment demo"></a></td>
+</tr>
+<tr>
+<td align="center"><b>Structure Editor</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html"><img src="docs/screenshots/editor.gif" width="260" alt="Structure editor demo"></a></td>
+<td align="center"><b>3D Viewer</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html"><img src="docs/screenshots/viewer.gif" width="260" alt="3D viewer demo"></a></td>
+<td align="center"><b>Real Protein (PDB)</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html"><img src="docs/screenshots/fetch_demo.gif" width="260" alt="Real protein PDB demo"></a></td>
 </tr>
 </table>
 

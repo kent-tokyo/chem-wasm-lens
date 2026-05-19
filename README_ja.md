@@ -8,9 +8,14 @@ Pure Rust で書かれた超軽量の分子解析カーネルで、WebAssembly �
 
 <table>
 <tr>
-<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="280" alt="SMILES SVG デモ"></a></td>
-<td align="center"><b>フィンガープリント類似度</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="280" alt="フィンガープリント デモ"></a></td>
-<td align="center"><b>2D アライメント</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="280" alt="2D アライメント デモ"></a></td>
+<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="260" alt="SMILES SVG デモ"></a></td>
+<td align="center"><b>フィンガープリント類似度</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="260" alt="フィンガープリント デモ"></a></td>
+<td align="center"><b>2D アライメント</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D アライメント デモ"></a></td>
+</tr>
+<tr>
+<td align="center"><b>構造エディタ</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html"><img src="docs/screenshots/editor.gif" width="260" alt="構造エディタ デモ"></a></td>
+<td align="center"><b>3D ビューア</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html"><img src="docs/screenshots/viewer.gif" width="260" alt="3D ビューア デモ"></a></td>
+<td align="center"><b>実タンパク質 (PDB)</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html"><img src="docs/screenshots/fetch_demo.gif" width="260" alt="実タンパク質 PDB デモ"></a></td>
 </tr>
 </table>
 
