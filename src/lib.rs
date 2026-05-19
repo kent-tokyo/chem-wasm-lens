@@ -7598,6 +7598,48 @@ impl MolecularSystem {
     }
 }
 
+// --- P55 private helpers: topological path fingerprint ---
+
+fn path_fp_dfs(
+    mol: &MolecularSystem,
+    curr: usize,
+    hash: u64,
+    depth: usize,
+    visited: &mut Vec<bool>,
+    bits: &mut [u8; 256],
+) {
+    let empty: Vec<usize> = Vec::new();
+    for (k, &nb) in mol.bonds.get(curr).unwrap_or(&empty).iter().enumerate() {
+        if visited[nb] { continue; }
+        let bo = mol.bond_orders.get(curr).and_then(|o| o.get(k)).copied().unwrap_or(1);
+        let sym = symbol_to_atomic_num(mol.symbols.get(nb).map(|s| s.as_str()).unwrap_or("C")) as u64;
+        let h = hash.wrapping_mul(1_000_003u64)
+                    .wrapping_add(sym.wrapping_mul(31).wrapping_add(bo as u64 * 7));
+        let bit = (h % 2048) as usize;
+        bits[bit / 8] |= 1 << (bit % 8);
+        if depth > 1 {
+            visited[nb] = true;
+            path_fp_dfs(mol, nb, h, depth - 1, visited, bits);
+            visited[nb] = false;
+        }
+    }
+}
+
+fn path_fingerprint_bits(mol: &MolecularSystem) -> [u8; 256] {
+    let n = mol.symbols.len();
+    let mut bits = [0u8; 256];
+    let mut visited = vec![false; n];
+    for start in 0..n {
+        visited[start] = true;
+        let init = symbol_to_atomic_num(
+            mol.symbols.get(start).map(|s| s.as_str()).unwrap_or("C")
+        ) as u64;
+        path_fp_dfs(mol, start, init, 7, &mut visited, &mut bits);
+        visited[start] = false;
+    }
+    bits
+}
+
 // --- P54: remove_hs, SDF properties, get_descriptors, normalize_depiction, is_valid ---
 #[wasm_bindgen]
 impl MolecularSystem {
@@ -7704,6 +7746,75 @@ impl MolecularSystem {
             }
         }
         true
+    }
+}
+
+// --- P55: add_hs, fingerprint_topological, get_stereo_tags ---
+#[wasm_bindgen]
+impl MolecularSystem {
+    /// Returns a new molecule with explicit H atoms added for all heavy atoms.
+    /// Coordinates are approximate (1.0 Å from parent, evenly distributed).
+    /// Idempotent: calling add_hs on a fully-explicit molecule changes nothing.
+    pub fn add_hs(&self) -> MolecularSystem {
+        let mut mol = self.clone();
+        let n = self.symbols.len();
+        for i in 0..n {
+            let h_count = self.implicit_h_count(i as u32).max(0) as usize;
+            if h_count == 0 { continue; }
+            let existing = mol.bonds.get(i).map(|b| b.len()).unwrap_or(0);
+            let total = (existing + h_count).max(1);
+            for k in 0..h_count {
+                let j = mol.symbols.len();
+                let angle = std::f32::consts::TAU * (existing + k) as f32 / total as f32;
+                let (hx, hy, hz) = (mol.x[i] + angle.cos(), mol.y[i] + angle.sin(), mol.z[i]);
+                mol.symbols.push("H".to_string());
+                mol.x.push(hx); mol.y.push(hy); mol.z.push(hz);
+                if !mol.charges.is_empty()             { mol.charges.push(0); }
+                if !mol.atom_names.is_empty()          { mol.atom_names.push(String::new()); }
+                if !mol.residue_names.is_empty()       { mol.residue_names.push(String::new()); mol.residue_ids.push(0); }
+                if !mol.chain_ids.is_empty()           { mol.chain_ids.push(b' '); }
+                if !mol.hetatm_flags.is_empty()        { mol.hetatm_flags.push(false); }
+                if !mol.occupancies.is_empty()         { mol.occupancies.push(1.0); }
+                if !mol.b_factors.is_empty()           { mol.b_factors.push(0.0); }
+                if !mol.aromatic_atoms.is_empty()      { mol.aromatic_atoms.push(false); }
+                if !mol.atom_map.is_empty()            { mol.atom_map.push(0); }
+                if !mol.ring_sizes_per_atom.is_empty() { mol.ring_sizes_per_atom.push(Vec::new()); }
+                mol.bonds.push(vec![i]);
+                mol.bond_orders.push(vec![1]);
+                mol.bonds[i].push(j);
+                mol.bond_orders[i].push(1);
+            }
+        }
+        mol.spatial_grid = None;
+        mol.ring_atoms.clear();
+        mol.ring_bonds.clear();
+        mol
+    }
+
+    /// Path-based topological fingerprint (2048-bit / 256-byte Uint8Array).
+    /// Enumerates all simple paths of bond-length 1–7; hashes atom types + bond orders.
+    pub fn fingerprint_topological(&self) -> Vec<u8> {
+        path_fingerprint_bits(self).to_vec()
+    }
+
+    /// Returns stereo tag objects sorted by atom index: [{index, chirality}].
+    /// `chirality` is `"@"` (CCW) or `"@@"` (CW). Empty array if no stereo centers.
+    pub fn get_stereo_tags(&self) -> JsValue {
+        #[derive(serde::Serialize)]
+        struct StereoTag { index: usize, chirality: String }
+        let mut tags: Vec<StereoTag> = self.stereo_centers.iter()
+            .map(|(&idx, &(desc, _))| StereoTag {
+                index: idx,
+                chirality: if desc > 0 { "@@".to_string() } else { "@".to_string() },
+            })
+            .collect();
+        tags.sort_by_key(|t| t.index);
+        to_js(&tags)
+    }
+
+    /// Returns true if the molecule has any tetrahedral stereo centers.
+    pub fn has_stereo(&self) -> bool {
+        !self.stereo_centers.is_empty()
     }
 }
 
@@ -11429,5 +11540,93 @@ $$$$
     #[test]
     fn p54c_is_valid_empty() {
         assert!(!MolecularSystem::new_empty().is_valid());
+    }
+
+    // ── P55 tests ──
+
+    #[test]
+    fn p55a_add_hs_count() {
+        let mol = parse_smiles("CC").unwrap().remove_hs();
+        let full = mol.add_hs();
+        assert_eq!(full.symbols.len(), 8, "2C + 6H = 8 atoms");
+        assert_eq!(full.symbols.iter().filter(|s| s.as_str() == "H").count(), 6);
+    }
+
+    #[test]
+    fn p55a_add_hs_idempotent() {
+        let mol = parse_smiles("CC").unwrap();
+        let n = mol.symbols.len();
+        assert_eq!(mol.add_hs().symbols.len(), n, "fully-explicit mol: add_hs adds nothing");
+    }
+
+    #[test]
+    fn p55a_add_hs_bonds_valid() {
+        let mol = parse_smiles("CC").unwrap().remove_hs().add_hs();
+        let n = mol.symbols.len();
+        for (i, nb_list) in mol.bonds.iter().enumerate() {
+            for &j in nb_list {
+                assert!(j < n && j != i, "bond index {j} must be in-bounds and not self");
+            }
+        }
+    }
+
+    #[test]
+    fn p55a_roundtrip_heavy_count() {
+        let heavy = parse_smiles("CC").unwrap().remove_hs();
+        let restored = heavy.add_hs();
+        assert_eq!(restored.num_heavy_atoms(), heavy.num_heavy_atoms());
+    }
+
+    #[test]
+    fn p55b_topo_fp_length() {
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        assert_eq!(mol.fingerprint_topological().len(), 256);
+    }
+
+    #[test]
+    fn p55b_topo_fp_identical() {
+        let a = parse_smiles("c1ccccc1").unwrap();
+        let b = parse_smiles("c1ccccc1").unwrap();
+        assert_eq!(a.fingerprint_topological(), b.fingerprint_topological());
+    }
+
+    #[test]
+    fn p55b_topo_fp_different() {
+        let benz = parse_smiles("c1ccccc1").unwrap();
+        let eth = parse_smiles("CC").unwrap();
+        assert_ne!(benz.fingerprint_topological(), eth.fingerprint_topological());
+    }
+
+    #[test]
+    fn p55b_topo_fp_nonempty() {
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        assert!(mol.fingerprint_topological().iter().any(|&b| b != 0));
+    }
+
+    #[test]
+    fn p55c_has_stereo_true() {
+        let mol = parse_smiles("[C@@H](F)(Cl)Br").unwrap();
+        assert!(mol.has_stereo());
+    }
+
+    #[test]
+    fn p55c_has_stereo_false() {
+        let mol = parse_smiles("CC").unwrap();
+        assert!(!mol.has_stereo());
+    }
+
+    #[test]
+    fn p55c_get_stereo_tags_no_crash() {
+        // get_stereo_tags() calls to_js (wasm-only); test the underlying data instead
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        assert!(mol.stereo_centers.is_empty());
+        assert!(!mol.has_stereo());
+    }
+
+    #[test]
+    fn p55c_get_stereo_tags_stereo_center_count() {
+        let mol = parse_smiles("[C@@H](F)(Cl)Br").unwrap();
+        assert_eq!(mol.stereo_center_count(), 1);
+        assert!(mol.has_stereo());
     }
 }
