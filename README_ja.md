@@ -71,6 +71,7 @@ RDKit.js は C++ の RDKit を Wasm ポートしたもので、機能は豊富�
 | 3 | JS/TS 使用例・ブラウザテスト・npm 公開・ベンチマーク | 完了 |
 | 4 | SMILES・SVG 2D 描画・SMARTS・フィンガープリント・ファイル形式 I/O | 完了 |
 | 5 | 構造式エディタカーネル（P42–P49: 23 メソッド） | 完了 |
+| 6 | RDKit.js パリティ（P50–P53: 記述子・3D コンフォーマー・Reaction・SMARTS 強化） | 完了 |
 
 ## クイックスタート
 
@@ -190,6 +191,23 @@ console.log(residues); // 例: ["A:ALA:10", "A:GLY:11", ...]
 | `move_atoms(indices, dx, dy)` | `void` | 指定原子のみ平行移動 |
 | `check_valence()` | `Uint32Array` | バレンス違反原子のインデックス |
 | `copy_atoms(indices)` | `MolecularSystem` | 原子サブセットを新インスタンスとして抽出 |
+
+### RDKit.js パリティ — 記述子 & 解析
+
+| メソッド | 返り値 | 説明 |
+|---------|--------|------|
+| `largest_fragment()` | `MolecularSystem` | 最大連結成分（脱塩処理） |
+| `murcko_scaffold()` | `MolecularSystem` | Murcko スキャフォールドを新インスタンスで返す |
+| `num_heavy_atoms()` | `number` | H を除いた原子数 |
+| `fraction_csp3()` | `number` | sp3 炭素割合（Fsp3） |
+| `molar_refractivity()` | `number` | Wildman-Crippen MR 推定値 |
+| `embed_molecule(seed)` | `boolean` | 距離幾何学による 3D 座標生成 |
+| `Reaction.run_reaction(reactant)` | `MolecularSystem[]` | 反応テンプレートを適用、マッチごとに生成物を返す |
+| `ring_sizes_for_atom(idx)` | `number[]` | 原子 idx を含む SSSR 環サイズ一覧 |
+| `ring_info()` | `{num_rings, ring_sizes}` | 分子全体の環数と環サイズ |
+| `aliphatic_ring_count()` | `number` | 非芳香族環の数 |
+| `fingerprint_atom_pair()` | `Uint8Array` | 2048-bit Atom Pair フィンガープリント（256 バイト） |
+| `generate_aligned_coords(template)` | `void` | サブストラクチャーマッチ + 2D Kabsch 回転でテンプレート座標系に揃える |
 
 ---
 

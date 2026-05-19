@@ -71,6 +71,7 @@ RDKit.js（C++ RDKit 的 Wasm 移植版）功能丰富，但 **Bundle 大小超�
 | 3 | JS/TS 使用示例、浏览器测试、npm 发布、基准测试 | 完成 |
 | 4 | SMILES、SVG 2D 渲染、SMARTS、指纹、文件格式 I/O | 完成 |
 | 5 | 结构式编辑器内核（P42–P49：23 个方法） | 完成 |
+| 6 | RDKit.js 功能对齐（P50–P53：描述符·3D 构象·反应·SMARTS 强化） | 完成 |
 
 ## 快速开始
 
@@ -190,6 +191,23 @@ console.log(residues); // 例如: ["A:ALA:10", "A:GLY:11", ...]
 | `move_atoms(indices, dx, dy)` | `void` | 仅平移指定原子 |
 | `check_valence()` | `Uint32Array` | 返回键级超出标准价的原子索引 |
 | `copy_atoms(indices)` | `MolecularSystem` | 将原子子集提取为新实例 |
+
+### RDKit.js 功能对齐 — 描述符与分析
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `largest_fragment()` | `MolecularSystem` | 最大连通分量（脱盐处理） |
+| `murcko_scaffold()` | `MolecularSystem` | 返回 Murcko 骨架的新实例 |
+| `num_heavy_atoms()` | `number` | 不含 H 的原子数 |
+| `fraction_csp3()` | `number` | sp3 碳占比（Fsp3） |
+| `molar_refractivity()` | `number` | Wildman-Crippen MR 估算值 |
+| `embed_molecule(seed)` | `boolean` | 使用距离几何算法生成 3D 坐标 |
+| `Reaction.run_reaction(reactant)` | `MolecularSystem[]` | 对每处子结构匹配应用反应模板，返回各匹配位点的产物 |
+| `ring_sizes_for_atom(idx)` | `number[]` | 包含原子 idx 的 SSSR 环大小列表 |
+| `ring_info()` | `{num_rings, ring_sizes}` | 整个分子的环数和环大小 |
+| `aliphatic_ring_count()` | `number` | 非芳香环数量 |
+| `fingerprint_atom_pair()` | `Uint8Array` | 2048-bit Atom Pair 指纹（256 字节） |
+| `generate_aligned_coords(template)` | `void` | 通过子结构匹配 + 2D Kabsch 旋转将坐标对齐至模板 |
 
 ---
 

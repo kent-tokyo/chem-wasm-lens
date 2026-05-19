@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chem-wasm-lens — Template 2D Alignment</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 860px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #fafafa;
+      color: #222;
+    }
+    h1 { font-size: 1.15rem; margin-bottom: 0.2rem; }
+    .subtitle { font-size: 0.82rem; color: #666; margin-bottom: 1.2rem; }
+    .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.6rem; }
+    label { font-size: 0.82rem; color: #555; white-space: nowrap; min-width: 5rem; }
+    input[type=text] {
+      flex: 1; min-width: 200px; font-size: 0.95rem;
+      font-family: monospace; padding: 0.4rem 0.6rem;
+      border: 1px solid #ccc; border-radius: 4px;
+    }
+    button {
+      padding: 0.4rem 0.9rem; border: 1px solid #888; border-radius: 4px;
+      background: #f0f0f0; cursor: pointer; font-size: 0.88rem;
+    }
+    button:hover { background: #e0e0e0; }
+    button.preset { font-size: 0.76rem; padding: 0.25rem 0.55rem; border-color: #aaa; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+    .panel { background: #fff; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
+    .panel-header {
+      font-size: 0.78rem; color: #777; background: #f5f5f5;
+      padding: 0.4rem 0.7rem; border-bottom: 1px solid #e8e8e8;
+    }
+    .panel-body { min-height: 260px; display: flex; align-items: center; justify-content: center; }
+    .panel-body svg { display: block; }
+    .panel-body .placeholder { color: #bbb; font-size: 0.9rem; }
+    #status { font-size: 0.82rem; color: #555; margin-top: 0.6rem; min-height: 1.2em; }
+    #status.err { color: #c33; }
+    .presets-row { font-size: 0.76rem; color: #888; margin-bottom: 0.2rem; }
+  </style>
+</head>
+<body>
+  <h1>chem-wasm-lens — Template 2D Alignment
+    &nbsp;<a href="smiles_svg.html" style="font-size:0.8rem;color:#48a">[ SMILES → SVG ]</a>
+    &nbsp;<a href="fingerprint.html" style="font-size:0.8rem;color:#48a">[ fingerprints ]</a>
+    &nbsp;<a href="index.html" style="font-size:0.8rem;color:#48a">[ all demos ]</a>
+  </h1>
+  <p class="subtitle">
+    Enter a template and a target molecule. The target is drawn with its scaffold aligned to the template.
+    Uses substructure match + 2D Kabsch rotation.
+  </p>
+
+  <div class="row">
+    <label>Template:</label>
+    <input id="template-smiles" type="text" value="c1ccccc1" placeholder="Template SMILES…" autocomplete="off" spellcheck="false" />
+  </div>
+  <div class="presets-row">
+    Template presets:
+    <button class="preset" data-target="template-smiles" data-smiles="c1ccccc1">Benzene</button>
+    <button class="preset" data-target="template-smiles" data-smiles="c1ccncc1">Pyridine</button>
+    <button class="preset" data-target="template-smiles" data-smiles="C1CCCCC1">Cyclohexane</button>
+    <button class="preset" data-target="template-smiles" data-smiles="c1ccc2ccccc2c1">Naphthalene</button>
+  </div>
+
+  <div class="row" style="margin-top:0.5rem">
+    <label>Target:</label>
+    <input id="target-smiles" type="text" value="c1ccc2ccccc2c1" placeholder="Target SMILES…" autocomplete="off" spellcheck="false" />
+  </div>
+  <div class="presets-row">
+    Target presets:
+    <button class="preset" data-target="target-smiles" data-smiles="c1ccc2ccccc2c1">Naphthalene</button>
+    <button class="preset" data-target="target-smiles" data-smiles="CC(=O)Nc1ccc(O)cc1">Paracetamol</button>
+    <button class="preset" data-target="target-smiles" data-smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C">Caffeine</button>
+    <button class="preset" data-target="target-smiles" data-smiles="CC(C)Cc1ccc(cc1)C(C)C(=O)O">Ibuprofen</button>
+    <button class="preset" data-target="target-smiles" data-smiles="c1ccc2[nH]ccc2c1">Indole</button>
+  </div>
+
+  <div class="row" style="margin-top:0.6rem">
+    <button id="align-btn" style="padding:0.45rem 1.4rem;font-size:0.95rem">Align</button>
+  </div>
+
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-header">Template (reference coordinates)</div>
+      <div class="panel-body" id="template-canvas"><span class="placeholder">loading…</span></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">Target — aligned to template</div>
+      <div class="panel-body" id="target-canvas"><span class="placeholder">—</span></div>
+    </div>
+  </div>
+
+  <div id="status"></div>
+
+  <script type="module">
+    import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens/dist/chem-wasm-lens.esm.js';
+    const { MolecularSystem } = await loadChem();
+
+    const templateInput = document.getElementById('template-smiles');
+    const targetInput   = document.getElementById('target-smiles');
+    const statusEl      = document.getElementById('status');
+
+    function setPanel(id, svgText, placeholder) {
+      const panel = document.getElementById(id);
+      while (panel.firstChild) panel.removeChild(panel.firstChild);
+      if (svgText) {
+        const el = new DOMParser().parseFromString(svgText, 'image/svg+xml').documentElement;
+        panel.appendChild(el);
+      } else {
+        const span = document.createElement('span');
+        span.className = 'placeholder';
+        span.textContent = placeholder || '—';
+        panel.appendChild(span);
+      }
+    }
+
+    function align() {
+      statusEl.className = '';
+      statusEl.textContent = '';
+
+      const tSmiles = templateInput.value.trim();
+      const mSmiles = targetInput.value.trim();
+      if (!tSmiles || !mSmiles) { statusEl.textContent = 'Enter both SMILES.'; return; }
+
+      let tmpl, mol;
+      try { tmpl = MolecularSystem.from_smiles(tSmiles); }
+      catch(e) { statusEl.className = 'err'; statusEl.textContent = `Template parse error: ${e}`; return; }
+      try { mol = MolecularSystem.from_smiles(mSmiles); }
+      catch(e) { statusEl.className = 'err'; statusEl.textContent = `Target parse error: ${e}`; return; }
+
+      // Generate template 2D coords
+      tmpl.compute_rings();
+      tmpl.compute_2d_coords();
+
+      // Align target to template
+      mol.compute_rings();
+      mol.generate_aligned_coords(tmpl);
+
+      const W = 380, H = 260;
+      setPanel('template-canvas', tmpl.to_svg_string(W, H));
+      setPanel('target-canvas',   mol.to_svg_string(W, H));
+
+      const matched = tmpl.has_substructure(mSmiles) || mol.has_substructure(tSmiles);
+      const info = `Template: ${tmpl.num_heavy_atoms()} heavy atoms · Target: ${mol.num_heavy_atoms()} heavy atoms`;
+      statusEl.textContent = info + (matched ? '' : ' · No substructure match — fallback layout used');
+    }
+
+    // Initial render
+    align();
+
+    document.getElementById('align-btn').addEventListener('click', align);
+    templateInput.addEventListener('keydown', e => { if (e.key === 'Enter') align(); });
+    targetInput.addEventListener('keydown',   e => { if (e.key === 'Enter') align(); });
+
+    document.querySelectorAll('.preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById(btn.dataset.target).value = btn.dataset.smiles;
+        align();
+      });
+    });
+  </script>
+</body>
+</html>

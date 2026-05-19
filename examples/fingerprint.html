@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chem-wasm-lens — Fingerprint Similarity</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 860px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #fafafa;
+      color: #222;
+    }
+    h1 { font-size: 1.15rem; margin-bottom: 0.2rem; }
+    .subtitle { font-size: 0.82rem; color: #666; margin-bottom: 1.2rem; }
+    .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.6rem; }
+    label { font-size: 0.82rem; color: #555; white-space: nowrap; min-width: 4.5rem; }
+    input[type=text] {
+      flex: 1; min-width: 200px; font-size: 0.95rem;
+      font-family: monospace; padding: 0.4rem 0.6rem;
+      border: 1px solid #ccc; border-radius: 4px;
+    }
+    button {
+      padding: 0.4rem 0.9rem; border: 1px solid #888; border-radius: 4px;
+      background: #f0f0f0; cursor: pointer; font-size: 0.88rem;
+    }
+    button:hover { background: #e0e0e0; }
+    button.preset { font-size: 0.76rem; padding: 0.25rem 0.55rem; border-color: #aaa; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 0.8rem; }
+    .panel { background: #fff; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; }
+    .panel-header { font-size: 0.78rem; color: #777; background: #f5f5f5; padding: 0.4rem 0.7rem; border-bottom: 1px solid #e8e8e8; }
+    .panel-body { min-height: 200px; display: flex; align-items: center; justify-content: center; }
+    .panel-body svg { display: block; }
+    .panel-body .placeholder { color: #bbb; font-size: 0.9rem; }
+    .results {
+      margin-top: 1rem; background: #fff; border: 1px solid #ddd;
+      border-radius: 6px; padding: 0.8rem 1rem;
+    }
+    .sim-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .sim-label { font-size: 0.82rem; color: #555; min-width: 9rem; }
+    .sim-bar-wrap { flex: 1; background: #eee; border-radius: 4px; height: 14px; overflow: hidden; }
+    .sim-bar { height: 100%; border-radius: 4px; transition: width 0.3s ease; }
+    .sim-ecfp4 { background: #5b8dd9; }
+    .sim-ap { background: #e07b39; }
+    .sim-value { font-size: 0.88rem; font-weight: 600; min-width: 3rem; text-align: right; }
+    #status { font-size: 0.82rem; color: #555; margin-top: 0.6rem; min-height: 1.2em; }
+    #status.err { color: #c33; }
+    .presets-row { font-size: 0.76rem; color: #888; margin-bottom: 0.25rem; }
+    .fp-bits { font-size: 0.7rem; color: #aaa; margin-top: 0.4rem; word-break: break-all; font-family: monospace; max-height: 3em; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <h1>chem-wasm-lens — Fingerprint Similarity
+    &nbsp;<a href="smiles_svg.html" style="font-size:0.8rem;color:#48a">[ SMILES → SVG ]</a>
+    &nbsp;<a href="alignment.html" style="font-size:0.8rem;color:#48a">[ 2D alignment ]</a>
+    &nbsp;<a href="index.html" style="font-size:0.8rem;color:#48a">[ all demos ]</a>
+  </h1>
+  <p class="subtitle">
+    Compare two molecules using ECFP4 and Atom Pair fingerprints. Tanimoto similarity 0–1.
+  </p>
+
+  <div class="row">
+    <label>Molecule A:</label>
+    <input id="smilesA" type="text" value="c1ccccc1" placeholder="SMILES A…" autocomplete="off" spellcheck="false" />
+  </div>
+  <div class="presets-row">
+    Presets A:
+    <button class="preset" data-target="smilesA" data-smiles="c1ccccc1">Benzene</button>
+    <button class="preset" data-target="smilesA" data-smiles="c1ccc2ccccc2c1">Naphthalene</button>
+    <button class="preset" data-target="smilesA" data-smiles="CC(=O)Nc1ccc(O)cc1">Paracetamol</button>
+    <button class="preset" data-target="smilesA" data-smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C">Caffeine</button>
+  </div>
+
+  <div class="row" style="margin-top:0.5rem">
+    <label>Molecule B:</label>
+    <input id="smilesB" type="text" value="c1cccnc1" placeholder="SMILES B…" autocomplete="off" spellcheck="false" />
+  </div>
+  <div class="presets-row">
+    Presets B:
+    <button class="preset" data-target="smilesB" data-smiles="c1cccnc1">Pyridine</button>
+    <button class="preset" data-target="smilesB" data-smiles="c1ccc2ccccc2c1">Naphthalene</button>
+    <button class="preset" data-target="smilesB" data-smiles="CCCCCC">Hexane</button>
+    <button class="preset" data-target="smilesB" data-smiles="CC(C)Cc1ccc(cc1)C(C)C(=O)O">Ibuprofen</button>
+  </div>
+
+  <div class="row" style="margin-top:0.6rem">
+    <button id="compare-btn" style="padding:0.45rem 1.4rem;font-size:0.95rem">Compare</button>
+  </div>
+
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-header">Molecule A</div>
+      <div class="panel-body" id="canvasA"><span class="placeholder">loading…</span></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">Molecule B</div>
+      <div class="panel-body" id="canvasB"><span class="placeholder">—</span></div>
+    </div>
+  </div>
+
+  <div class="results" id="results" style="display:none">
+    <div class="sim-row">
+      <span class="sim-label">ECFP4 Tanimoto</span>
+      <div class="sim-bar-wrap"><div class="sim-bar sim-ecfp4" id="bar-ecfp4" style="width:0%"></div></div>
+      <span class="sim-value" id="val-ecfp4">—</span>
+    </div>
+    <div class="sim-row">
+      <span class="sim-label">Atom Pair Tanimoto</span>
+      <div class="sim-bar-wrap"><div class="sim-bar sim-ap" id="bar-ap" style="width:0%"></div></div>
+      <span class="sim-value" id="val-ap">—</span>
+    </div>
+    <div class="fp-bits" id="fp-bits-a"></div>
+    <div class="fp-bits" id="fp-bits-b"></div>
+  </div>
+
+  <div id="status"></div>
+
+  <script type="module">
+    import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens/dist/chem-wasm-lens.esm.js';
+    const { MolecularSystem } = await loadChem();
+
+    function tanimoto(a, b) {
+      let and_ = 0, or_ = 0;
+      for (let i = 0; i < a.length; i++) {
+        and_ += popcount(a[i] & b[i]);
+        or_  += popcount(a[i] | b[i]);
+      }
+      return or_ === 0 ? 1.0 : and_ / or_;
+    }
+    function popcount(n) {
+      n = n >>> 0;
+      n = n - ((n >> 1) & 0x55555555);
+      n = (n & 0x33333333) + ((n >> 2) & 0x33333333);
+      n = (n + (n >> 4)) & 0x0f0f0f0f;
+      return (n * 0x01010101) >>> 24;
+    }
+    function fpHex(fp) {
+      return Array.from(fp).slice(0, 32).map(b => b.toString(16).padStart(2,'0')).join('') + '…';
+    }
+
+    function setPanel(id, svgText) {
+      const panel = document.getElementById(id);
+      while (panel.firstChild) panel.removeChild(panel.firstChild);
+      const el = new DOMParser().parseFromString(svgText, 'image/svg+xml').documentElement;
+      panel.appendChild(el);
+    }
+
+    function compare() {
+      const statusEl = document.getElementById('status');
+      statusEl.className = '';
+      statusEl.textContent = '';
+
+      const sA = document.getElementById('smilesA').value.trim();
+      const sB = document.getElementById('smilesB').value.trim();
+      if (!sA || !sB) { statusEl.textContent = 'Enter both SMILES.'; return; }
+
+      let molA, molB;
+      try { molA = MolecularSystem.from_smiles(sA); } catch(e) { statusEl.className='err'; statusEl.textContent=`A: ${e}`; return; }
+      try { molB = MolecularSystem.from_smiles(sB); } catch(e) { statusEl.className='err'; statusEl.textContent=`B: ${e}`; return; }
+
+      molA.compute_rings(); molA.compute_2d_coords();
+      molB.compute_rings(); molB.compute_2d_coords();
+
+      const W = 380, H = 200;
+      setPanel('canvasA', molA.to_svg_string(W, H));
+      setPanel('canvasB', molB.to_svg_string(W, H));
+
+      const ecfpA = molA.fingerprint_ecfp4();
+      const ecfpB = molB.fingerprint_ecfp4();
+      const apA   = molA.fingerprint_atom_pair();
+      const apB   = molB.fingerprint_atom_pair();
+
+      const simEcfp = tanimoto(ecfpA, ecfpB);
+      const simAp   = tanimoto(apA,   apB);
+
+      document.getElementById('bar-ecfp4').style.width = (simEcfp * 100).toFixed(1) + '%';
+      document.getElementById('bar-ap').style.width    = (simAp   * 100).toFixed(1) + '%';
+      document.getElementById('val-ecfp4').textContent = simEcfp.toFixed(3);
+      document.getElementById('val-ap').textContent    = simAp.toFixed(3);
+      document.getElementById('fp-bits-a').textContent = 'A ECFP4: ' + fpHex(ecfpA) + '  AP: ' + fpHex(apA);
+      document.getElementById('fp-bits-b').textContent = 'B ECFP4: ' + fpHex(ecfpB) + '  AP: ' + fpHex(apB);
+      document.getElementById('results').style.display = 'block';
+
+      statusEl.textContent =
+        `A: ${molA.molecular_formula()} · B: ${molB.molecular_formula()} · ` +
+        `ECFP4 ${simEcfp.toFixed(3)} · Atom Pair ${simAp.toFixed(3)}`;
+    }
+
+    compare();
+
+    document.getElementById('compare-btn').addEventListener('click', compare);
+    document.getElementById('smilesA').addEventListener('keydown', e => { if (e.key === 'Enter') compare(); });
+    document.getElementById('smilesB').addEventListener('keydown', e => { if (e.key === 'Enter') compare(); });
+
+    document.querySelectorAll('.preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById(btn.dataset.target).value = btn.dataset.smiles;
+        compare();
+      });
+    });
+  </script>
+</body>
+</html>

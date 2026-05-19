@@ -9,7 +9,7 @@
 
 An ultra-lightweight molecular analysis kernel in **pure Rust**, compiled to **WebAssembly**. Parse PDB / SDF / XYZ / mmCIF files, run spatial queries, detect bonds, compute geometry, and perform fingerprint similarity — all inside a browser Web Worker, with zero C/C++ dependencies.
 
-**[Live demo](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D viewer](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [real protein (RCSB)](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [structure editor](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html)
+**[Live demo](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D viewer](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [real protein (RCSB)](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [structure editor](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [fingerprints](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D alignment](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
 
 ---
 
@@ -167,7 +167,7 @@ Best for: **structural biology**, **cheminformatics**, **educational tools** —
 | `find_substructure(smarts)` | `Array<Uint32Array>` | All matches; each `Uint32Array` = one match's atom indices |
 | `get_substructure_atoms(smarts)` | `Uint32Array` | Union of all matched atom indices (for highlighting) |
 
-Supported SMARTS primitives: element symbols (`C`, `c`, `N`, `O` …), atomic number (`[#6]`), H count (`[OH]`, `[NH2]`), aromaticity (`a`, `A`), ring membership (`[R]`), negation (`[!#1]`), formal charge (`[+]`, `[-2]`), bond types (`-`, `=`, `#`, `:`, `~`).
+Supported SMARTS primitives: element symbols (`C`, `c`, `N`, `O` …), atomic number (`[#6]`), H count (`[OH]`, `[NH2]`), aromaticity (`a`, `A`), ring membership (`[R]`), ring size (`[r5]`, `[r6]`), heavy-atom degree (`[D2]`), total connectivity (`[X3]`), negation (`[!#1]`), formal charge (`[+]`, `[-2]`), bond types (`-`, `=`, `#`, `:`, `~`).
 
 ### Bulk export
 | Method | Returns | Notes |
@@ -230,6 +230,26 @@ Supported SMARTS primitives: element symbols (`C`, `c`, `N`, `O` …), atomic nu
 | Method | Returns | Notes |
 |--------|---------|-------|
 | `Reaction.run_reaction(reactant)` | `MolecularSystem[]` | Apply the reaction to each substructure match in `reactant`. Atom-map numbers (`[atom:N]`) in the reaction SMILES specify which atoms are transformed. Returns one product per match site. |
+
+### Ring info & extended SMARTS
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `ring_sizes_for_atom(idx)` | `number[]` | SSSR ring sizes containing atom `idx`. Requires `compute_bonds()` + `compute_rings()`. |
+| `ring_info()` | `{num_rings, ring_sizes}` | Ring count and sizes for the whole molecule. |
+| `aliphatic_ring_count()` | `number` | Rings with no aromatic atoms. |
+
+### Fingerprints — Atom Pair
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `fingerprint_atom_pair()` | `Uint8Array` | 2048-bit Atom Pair fingerprint (256 bytes). Encodes BFS-distance pairs of typed heavy atoms. Requires `compute_bonds()`. |
+
+### 2D template alignment
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `generate_aligned_coords(template)` | `void` | Generates 2D coordinates aligned to `template` via substructure match + 2D Kabsch rotation. Falls back to normal `compute_2d_coords()` when no substructure match is found. |
 
 ---
 
@@ -398,7 +418,7 @@ const neighbors: AtomInfo[] = mol.get_neighbors_info(0, 5.0);
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
 
-# Native unit tests (326 tests)
+# Native unit tests (336 tests)
 cargo test
 
 # Linting
@@ -474,7 +494,9 @@ After `wasm-pack build --target web` and `python3 -m http.server 8080`:
 - `examples/index.html` — feature walkthrough (XYZ, PDB, bonds, spatial, SDF)
 - `examples/viewer.html` — interactive 3D viewer (ball-and-stick, CPK, ribbon)
 - `examples/fetch_demo.html` — live RCSB fetch + φ/ψ dihedral analysis
-- `examples/smiles_svg.html` — interactive SMILES → SVG renderer
+- `examples/smiles_svg.html` — interactive SMILES → SVG renderer with SMARTS highlight
+- `examples/fingerprint.html` — ECFP4 vs Atom Pair fingerprint comparison (Tanimoto bars)
+- `examples/alignment.html` — template 2D alignment (`generate_aligned_coords`)
 
 ---
 
