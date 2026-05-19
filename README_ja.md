@@ -6,6 +6,14 @@ Pure Rust で書かれた超軽量の分子解析カーネルで、WebAssembly �
 
 **[ライブデモ](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D ビューア](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [実タンパク質（RCSB）](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [構造式エディタ](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [フィンガープリント](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D アライメント](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
 
+<table>
+<tr>
+<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="280" alt="SMILES SVG デモ"></a></td>
+<td align="center"><b>フィンガープリント類似度</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="280" alt="フィンガープリント デモ"></a></td>
+<td align="center"><b>2D アライメント</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="280" alt="2D アライメント デモ"></a></td>
+</tr>
+</table>
+
 ## なぜ chem-wasm-lens が必要か
 
 ### 課題：ブラウザでの分子計算はなぜ難しいのか

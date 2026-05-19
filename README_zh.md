@@ -6,6 +6,14 @@
 
 **[在线演示](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D 查看器](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [真实蛋白质（RCSB）](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [结构式编辑器](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [指纹](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D 对齐](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
 
+<table>
+<tr>
+<td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="280" alt="SMILES SVG 演示"></a></td>
+<td align="center"><b>指纹相似度</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="280" alt="指纹演示"></a></td>
+<td align="center"><b>2D 对齐</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="280" alt="2D 对齐演示"></a></td>
+</tr>
+</table>
+
 ## 为什么需要 chem-wasm-lens？
 
 ### 问题：浏览器中的分子计算为何困难
