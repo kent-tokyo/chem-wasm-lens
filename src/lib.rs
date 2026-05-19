@@ -85,6 +85,8 @@ pub struct MolecularSystem {
     // ring_sizes_per_atom[i] = sizes of SSSR rings containing atom i.
     // Populated by compute_rings() after enumerate_rings().
     ring_sizes_per_atom: Vec<Vec<u8>>,
+    // SDF/molecule-level data items ("> <NAME>" blocks). Empty for non-SDF inputs.
+    properties: std::collections::HashMap<String, String>,
 }
 
 /// Maximum atoms accepted from user input. Prevents OOM from maliciously crafted files.
@@ -683,6 +685,26 @@ pub fn parse_sdf(input: &str) -> Result<MolecularSystem, ParseError> {
     mol.z = z;
     mol.bonds = bonds;
     mol.bond_orders = bond_orders;
+
+    // Parse SDF data items: "> <PROPNAME>" / value / blank lines after the bond block.
+    let data_start = 4 + atom_count + bond_count;
+    let mut di = data_start;
+    while di < lines.len() {
+        let line = lines[di].trim();
+        if let Some(rest) = line.strip_prefix("> <").and_then(|r| r.strip_suffix('>')) {
+            let key = rest.to_string();
+            di += 1;
+            let mut vals: Vec<&str> = Vec::new();
+            while di < lines.len() && !lines[di].trim().is_empty() && !lines[di].trim().starts_with('>') {
+                vals.push(lines[di].trim());
+                di += 1;
+            }
+            mol.properties.insert(key, vals.join("\n"));
+        } else {
+            di += 1;
+        }
+    }
+
     Ok(mol)
 }
 
@@ -4130,6 +4152,7 @@ impl MolecularSystem {
             stereo_centers: std::collections::HashMap::new(),
             atom_map: Vec::new(),
             ring_sizes_per_atom: Vec::new(),
+            properties: std::collections::HashMap::new(),
         }
     }
 
@@ -4160,6 +4183,7 @@ impl MolecularSystem {
         let mut occupancies = Vec::new();
         let mut b_factors = Vec::new();
         let mut charges = Vec::new();
+        let mut aromatic_atoms_new = Vec::new();
 
         let has_atom_names = !self.atom_names.is_empty();
         let has_residue = !self.residue_names.is_empty();
@@ -4168,6 +4192,7 @@ impl MolecularSystem {
         let has_occ = !self.occupancies.is_empty();
         let has_bfac = !self.b_factors.is_empty();
         let has_charges = !self.charges.is_empty();
+        let has_arom = !self.aromatic_atoms.is_empty();
 
         for &old_i in indices {
             symbols.push(self.symbols[old_i].clone());
@@ -4195,6 +4220,9 @@ impl MolecularSystem {
             }
             if has_charges {
                 charges.push(self.charges.get(old_i).copied().unwrap_or(0));
+            }
+            if has_arom {
+                aromatic_atoms_new.push(self.aromatic_atoms.get(old_i).copied().unwrap_or(false));
             }
             // Remap bonds
             let remapped: Vec<usize> = if old_i < self.bonds.len() {
@@ -4261,6 +4289,8 @@ impl MolecularSystem {
         mol.charges = charges;
         mol.atom_map = atom_map_new;
         mol.ring_sizes_per_atom = ring_sizes_per_atom_new;
+        mol.aromatic_atoms = aromatic_atoms_new;
+        mol.properties = self.properties.clone();
         mol.stereo_centers = {
             let mut sc = std::collections::HashMap::new();
             for (&old_i, &(desc, from)) in &self.stereo_centers {
@@ -7565,6 +7595,115 @@ impl MolecularSystem {
             self.x[i] = cos_a * dx - sin_a * dy + cp_ref[0];
             self.y[i] = sin_a * dx + cos_a * dy + cp_ref[1];
         }
+    }
+}
+
+// --- P54: remove_hs, SDF properties, get_descriptors, normalize_depiction, is_valid ---
+#[wasm_bindgen]
+impl MolecularSystem {
+    /// Returns a new molecule with all H atoms stripped and bonds remapped.
+    /// Preserves aromatic flags, stereo centers, and bond orders for heavy atoms.
+    pub fn remove_hs(&self) -> MolecularSystem {
+        let heavy: Vec<usize> = (0..self.symbols.len())
+            .filter(|&i| self.symbols[i] != "H")
+            .collect();
+        self.select_by_indices(&heavy)
+    }
+
+    /// Get SDF data item by name. Returns None if not present.
+    pub fn get_prop(&self, name: &str) -> Option<String> {
+        self.properties.get(name).cloned()
+    }
+
+    /// Set or overwrite an SDF data item.
+    pub fn set_prop(&mut self, name: &str, value: &str) {
+        self.properties.insert(name.to_string(), value.to_string());
+    }
+
+    /// List all SDF data item names, sorted alphabetically.
+    pub fn get_prop_list(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self.properties.keys().cloned().collect();
+        keys.sort();
+        keys
+    }
+
+    /// Returns all common descriptors as a single JS object.
+    /// Ring-dependent values (num_rings, aromatic_ring_count, rotatable_bond_count,
+    /// fraction_csp3) are 0 when compute_rings() has not been called.
+    pub fn get_descriptors(&self) -> JsValue {
+        #[derive(serde::Serialize)]
+        struct Desc {
+            molecular_weight: f32,
+            molecular_formula: String,
+            num_heavy_atoms: u32,
+            formal_charge: i32,
+            h_bond_donors: u32,
+            h_bond_acceptors: u32,
+            rotatable_bond_count: u32,
+            tpsa: f32,
+            logp: f32,
+            molar_refractivity: f32,
+            fraction_csp3: f32,
+            num_rings: usize,
+            aromatic_ring_count: u32,
+        }
+        let rings = self.enumerate_rings();
+        let num_rings = rings.len();
+        let aromatic_ring_count = rings.iter()
+            .filter(|ring| ring.iter().any(|&a| self.aromatic_atoms.get(a).copied().unwrap_or(false)))
+            .count() as u32;
+        to_js(&Desc {
+            molecular_weight: self.molecular_weight(),
+            molecular_formula: self.molecular_formula(),
+            num_heavy_atoms: self.num_heavy_atoms(),
+            formal_charge: self.formal_charge(),
+            h_bond_donors: self.h_bond_donors(),
+            h_bond_acceptors: self.h_bond_acceptors(),
+            rotatable_bond_count: self.rotatable_bond_count(),
+            tpsa: self.tpsa(),
+            logp: self.logp(),
+            molar_refractivity: self.molar_refractivity(),
+            fraction_csp3: self.fraction_csp3(),
+            num_rings,
+            aromatic_ring_count,
+        })
+    }
+
+    /// Scales 2D coordinates so the average heavy-atom bond length equals 1.5 Å,
+    /// then centers the molecule at the origin.
+    pub fn normalize_depiction(&mut self) {
+        if self.x.is_empty() { return; }
+        let mut total = 0f32;
+        let mut count = 0usize;
+        for i in 0..self.symbols.len() {
+            if self.symbols[i] == "H" || i >= self.bonds.len() { continue; }
+            for &j in &self.bonds[i] {
+                if j > i && self.symbols.get(j).map(|s| s != "H").unwrap_or(false) {
+                    let dx = self.x[j] - self.x[i];
+                    let dy = self.y[j] - self.y[i];
+                    let d = (dx * dx + dy * dy).sqrt();
+                    if d > 0.001 { total += d; count += 1; }
+                }
+            }
+        }
+        let scale = if count > 0 { 1.5 / (total / count as f32) } else { 1.0 };
+        let n = self.x.len();
+        for i in 0..n { self.x[i] *= scale; self.y[i] *= scale; }
+        let cx: f32 = self.x.iter().sum::<f32>() / n as f32;
+        let cy: f32 = self.y.iter().sum::<f32>() / n as f32;
+        for i in 0..n { self.x[i] -= cx; self.y[i] -= cy; }
+    }
+
+    /// Returns true if the molecule has atoms and all bond indices are valid.
+    pub fn is_valid(&self) -> bool {
+        if self.symbols.is_empty() { return false; }
+        let n = self.symbols.len();
+        for (i, nb) in self.bonds.iter().enumerate() {
+            for &j in nb {
+                if j >= n || j == i { return false; }
+            }
+        }
+        true
     }
 }
 
@@ -11183,5 +11322,112 @@ $$$$
         for i in 0..mol.atom_count() {
             assert!(mol.x[i].is_finite());
         }
+    }
+
+    // ── P54 tests ──
+
+    #[test]
+    fn p54a_remove_hs_count() {
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        let heavy = mol.remove_hs();
+        assert_eq!(heavy.num_heavy_atoms(), 6);
+        assert_eq!(heavy.symbols.iter().filter(|s| s.as_str() == "H").count(), 0);
+    }
+
+    #[test]
+    fn p54a_remove_hs_aromatic_preserved() {
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        let heavy = mol.remove_hs();
+        assert_eq!(heavy.aromatic_atoms.len(), 6);
+        assert!(heavy.aromatic_atoms.iter().all(|&a| a));
+    }
+
+    #[test]
+    fn p54a_remove_hs_bonds_remapped() {
+        let mol = parse_smiles("CC").unwrap();
+        let heavy = mol.remove_hs();
+        assert_eq!(heavy.symbols.len(), 2, "ethane has 2 heavy atoms");
+        assert!(heavy.bonds[0].contains(&1), "C–C bond must survive H removal");
+    }
+
+    #[test]
+    fn p54a_remove_hs_idempotent() {
+        let mol = parse_smiles("CC").unwrap().remove_hs();
+        let n = mol.symbols.len();
+        assert_eq!(mol.remove_hs().symbols.len(), n);
+    }
+
+    #[test]
+    fn p54b_sdf_prop_get() {
+        let sdf = concat!(
+            "\n\n\n",
+            "  1  0  0  0  0  0  0  0  0  0999 V2000\n",
+            "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "M  END\n",
+            "> <IC50>\n",
+            "12.5\n",
+            "\n",
+            "$$$$\n"
+        );
+        let mol = parse_sdf(sdf).unwrap();
+        assert_eq!(mol.properties.get("IC50").map(|s| s.as_str()), Some("12.5"));
+    }
+
+    #[test]
+    fn p54b_sdf_prop_list_sorted() {
+        let sdf = concat!(
+            "\n\n\n",
+            "  1  0  0  0  0  0  0  0  0  0999 V2000\n",
+            "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "M  END\n",
+            "> <ZZ>\n1\n\n",
+            "> <AA>\n2\n\n",
+            "$$$$\n"
+        );
+        let mol = parse_sdf(sdf).unwrap();
+        let mut keys: Vec<&String> = mol.properties.keys().collect();
+        keys.sort();
+        assert_eq!(keys[0].as_str(), "AA");
+        assert_eq!(keys[1].as_str(), "ZZ");
+    }
+
+    #[test]
+    fn p54b_sdf_set_prop() {
+        let mut mol = MolecularSystem::new_empty();
+        mol.properties.insert("activity".to_string(), "active".to_string());
+        assert_eq!(mol.properties.get("activity").map(|s| s.as_str()), Some("active"));
+    }
+
+    #[test]
+    fn p54b_sdf_no_props_empty() {
+        let mol = parse_smiles("C").unwrap();
+        assert!(mol.properties.is_empty());
+    }
+
+    #[test]
+    fn p54c_descriptors_mw_benzene() {
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        assert!(mol.molecular_weight() > 70.0 && mol.molecular_weight() < 90.0);
+    }
+
+    #[test]
+    fn p54c_normalize_depiction_finite() {
+        let mut mol = parse_smiles("c1ccccc1").unwrap();
+        mol.compute_2d_coords_data();
+        mol.normalize_depiction();
+        for i in 0..mol.symbols.len() {
+            assert!(mol.x[i].is_finite() && mol.y[i].is_finite());
+        }
+    }
+
+    #[test]
+    fn p54c_is_valid_smiles() {
+        let mol = parse_smiles("c1ccccc1").unwrap();
+        assert!(mol.is_valid());
+    }
+
+    #[test]
+    fn p54c_is_valid_empty() {
+        assert!(!MolecularSystem::new_empty().is_valid());
     }
 }

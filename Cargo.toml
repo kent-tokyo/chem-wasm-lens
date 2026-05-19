@@ -1,6 +1,6 @@
 [package]
 name = "chem-wasm-lens"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 description = "Ultra-lightweight molecular analysis kernel (XYZ/PDB parsing, bond detection, spatial queries) compiled to WebAssembly"
 license = "MIT OR Apache-2.0"
