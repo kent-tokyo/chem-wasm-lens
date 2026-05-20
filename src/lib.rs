@@ -3473,8 +3473,7 @@ impl MolecularSystem {
             }
         }
         let mut spiro: Vec<u32> = Vec::new();
-        'outer: for a in 0..n {
-            let mems = &membership[a];
+        'outer: for (a, mems) in membership.iter().enumerate() {
             if mems.len() < 2 { continue; }
             for i in 0..mems.len() {
                 for j in (i + 1)..mems.len() {
@@ -4842,7 +4841,7 @@ impl MolecularSystem {
                 else { "unknown" }
             }
             5 => if near_180 >= 1 { "trigonal_bipyramidal" } else { "square_pyramidal" },
-            6 => if near_180 == 3 && near_90 >= 8 { "octahedral" } else { "unknown" },
+            6 if near_180 == 3 && near_90 >= 8 => "octahedral",
             _ => "unknown",
         }.to_string()
     }
@@ -4951,9 +4950,7 @@ impl MolecularSystem {
                     if hc >= 1 && cc >= 1 { found.insert("thiol"); }
                     if hc == 0 && cc == 2 { found.insert("sulfide"); }
                 }
-                "P" => {
-                    if dbl_o(i) >= 1 { found.insert("phosphate"); }
-                }
+                "P" if dbl_o(i) >= 1 => { found.insert("phosphate"); }
                 _ => {}
             }
         }
@@ -5442,7 +5439,7 @@ fn coords2d_chain_dfs(
     let nc = children.len();
     for (i, &child) in children.iter().enumerate() {
         let angle = if nc == 1 {
-            if u % 2 == 0 { incoming_angle - PI / 6.0 } else { incoming_angle + PI / 6.0 }
+            if u.is_multiple_of(2) { incoming_angle - PI / 6.0 } else { incoming_angle + PI / 6.0 }
         } else if nc == 2 {
             if i == 0 { incoming_angle - PI / 3.0 } else { incoming_angle + PI / 3.0 }
         } else {
