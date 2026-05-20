@@ -2,14 +2,14 @@
 name = "chem-wasm-lens"
 version = "0.2.7"
 edition = "2021"
-description = "Ultra-lightweight molecular analysis kernel (XYZ/PDB parsing, bond detection, spatial queries) compiled to WebAssembly"
+description = "Ultra-lightweight WebAssembly kernel for cheminformatics: XYZ/PDB/SDF/SMILES/CML parsing, bond detection, ring & stereo analysis, fingerprints, 2D depiction"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/kent-tokyo/chem-wasm-lens"
-homepage = "https://github.com/kent-tokyo/chem-wasm-lens"
+homepage = "https://kent-tokyo.github.io/chem-wasm-lens/examples/"
 documentation = "https://github.com/kent-tokyo/chem-wasm-lens#readme"
 readme = "README.md"
-keywords = ["wasm", "chemistry", "molecular", "cheminformatics"]
-categories = ["science", "wasm", "parsing"]
+keywords = ["wasm", "cheminformatics", "smiles", "chemistry", "molecular"]
+categories = ["science", "wasm", "parsing", "algorithms"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
