@@ -85,6 +85,7 @@ RDKit.js（C++ RDKit 的 Wasm 移植版）功能丰富，但 **Bundle 大小超�
 | 4 | SMILES、SVG 2D 渲染、SMARTS、指纹、文件格式 I/O | 完成 |
 | 5 | 结构式编辑器内核（P42–P49：23 个方法） | 完成 |
 | 6 | RDKit.js 功能对齐（P50–P53：描述符·3D 构象·反应·SMARTS 强化） | 完成 |
+| 7 | 立体化学深化（P54–P57：H 加减·E/Z stereo·环分类·原子映射公开 API） | 完成 |
 
 ## 快速开始
 
@@ -221,6 +222,43 @@ console.log(residues); // 例如: ["A:ALA:10", "A:GLY:11", ...]
 | `aliphatic_ring_count()` | `number` | 非芳香环数量 |
 | `fingerprint_atom_pair()` | `Uint8Array` | 2048-bit Atom Pair 指纹（256 字节） |
 | `generate_aligned_coords(template)` | `void` | 通过子结构匹配 + 2D Kabsch 旋转将坐标对齐至模板 |
+
+### 描述符捆绑与 H 处理（P54–P55）
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `remove_hs()` | `MolecularSystem` | 移除所有 H 原子并重新映射键连接 |
+| `add_hs()` | `MolecularSystem` | 将隐式 H 显式化为原子 |
+| `get_descriptors()` | `object` | 一次调用返回 MW·formula·HBD/HBA·TPSA·LogP·MR·Fsp3 等所有描述符 |
+| `normalize_depiction()` | `void` | 将平均键长归一化为 1.5 Å 并居中 |
+| `fingerprint_topological()` | `Uint8Array` | 基于路径的 2048-bit 指纹（键长 1–7） |
+| `get_stereo_tags()` | `{index,chirality}[]` | 四面体立体中心列表（`"@"` / `"@@"`） |
+
+### 立体化学 — E/Z 与 3D 感知（P56–P57）
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `is_ez_bond(a, b)` | `boolean\|undefined` | `true`=E/trans，`false`=Z/cis，`undefined`=未指定 |
+| `ez_bond_count()` | `number` | 已知 E/Z 配置的双键数 |
+| `perceive_stereo_from_3d()` | `void` | 从 3D 坐标感知四面体立体中心（`from_sdf_string` 自动调用） |
+| `perceive_ez_from_3d()` | `void` | 从 3D 坐标感知 E/Z（`from_sdf_string` 自动调用） |
+
+### 原子映射（P57）
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `get_atom_map_index(idx)` | `number` | 原子映射编号（`[C:1]`）；0 = 未映射 |
+| `set_atom_map_index(idx, n)` | `void` | 设置原子映射编号 |
+| `has_atom_map()` | `boolean` | 任意原子有非零映射编号则返回 true |
+| `clear_atom_map()` | `void` | 将所有映射编号重置为 0 |
+
+### 环结构分类（P57）
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `get_spiro_atoms()` | `Uint32Array` | spiro 中心原子索引列表。需先调用 `compute_rings()`。 |
+| `get_fused_ring_bonds()` | `[number,number][]` | 两个环共享的键列表。需先调用 `compute_rings()`。 |
+| `is_bridged_ring_system()` | `boolean` | 存在 norbornane 型桥环系统时返回 true。需先调用 `compute_rings()`。 |
 
 ---
 

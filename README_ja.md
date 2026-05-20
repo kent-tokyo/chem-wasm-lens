@@ -85,6 +85,7 @@ RDKit.js は C++ の RDKit を Wasm ポートしたもので、機能は豊富�
 | 4 | SMILES・SVG 2D 描画・SMARTS・フィンガープリント・ファイル形式 I/O | 完了 |
 | 5 | 構造式エディタカーネル（P42–P49: 23 メソッド） | 完了 |
 | 6 | RDKit.js パリティ（P50–P53: 記述子・3D コンフォーマー・Reaction・SMARTS 強化） | 完了 |
+| 7 | 立体化学深化（P54–P57: H 付加/除去・E/Z stereo・環分類・アトムマップ公開 API） | 完了 |
 
 ## クイックスタート
 
@@ -221,6 +222,44 @@ console.log(residues); // 例: ["A:ALA:10", "A:GLY:11", ...]
 | `aliphatic_ring_count()` | `number` | 非芳香族環の数 |
 | `fingerprint_atom_pair()` | `Uint8Array` | 2048-bit Atom Pair フィンガープリント（256 バイト） |
 | `generate_aligned_coords(template)` | `void` | サブストラクチャーマッチ + 2D Kabsch 回転でテンプレート座標系に揃える |
+
+### 記述子バンドル・H 付加除去（P54–P55）
+
+| メソッド | 返り値 | 説明 |
+|---------|--------|------|
+| `remove_hs()` | `MolecularSystem` | H 原子を除去し結合インデックスを再マッピング |
+| `add_hs()` | `MolecularSystem` | implicit H を explicit 原子として付加 |
+| `get_descriptors()` | `object` | MW・formula・HBD/HBA・TPSA・LogP・MR・Fsp3 等を一括返却 |
+| `normalize_depiction()` | `void` | 平均結合長を 1.5 Å に正規化 + 原点中心化 |
+| `fingerprint_topological()` | `Uint8Array` | パスベース 2048-bit フィンガープリント（結合長 1–7） |
+| `get_stereo_tags()` | `{index,chirality}[]` | 四面体立体中心の一覧（`"@"` / `"@@"`） |
+| `get_prop(name)` / `set_prop(name, value)` | `string\|undefined` / `void` | SDF データアイテムの読み書き |
+
+### 立体化学 — E/Z・3D 知覚（P56–P57）
+
+| メソッド | 返り値 | 説明 |
+|---------|--------|------|
+| `is_ez_bond(a, b)` | `boolean\|undefined` | `true`=E/trans, `false`=Z/cis, `undefined`=未指定 |
+| `ez_bond_count()` | `number` | E/Z が既知の二重結合数 |
+| `perceive_stereo_from_3d()` | `void` | 3D 座標から四面体立体中心を知覚（`from_sdf_string` で自動呼び出し） |
+| `perceive_ez_from_3d()` | `void` | 3D 座標から E/Z を知覚（`from_sdf_string` で自動呼び出し） |
+
+### アトムマッピング（P57）
+
+| メソッド | 返り値 | 説明 |
+|---------|--------|------|
+| `get_atom_map_index(idx)` | `number` | アトムマップ番号（`[C:1]`）; 0 = 未マップ |
+| `set_atom_map_index(idx, n)` | `void` | アトムマップ番号を設定 |
+| `has_atom_map()` | `boolean` | いずれかの原子にマップ番号があれば true |
+| `clear_atom_map()` | `void` | 全マップ番号を 0 にリセット |
+
+### 環の構造分類（P57）
+
+| メソッド | 返り値 | 説明 |
+|---------|--------|------|
+| `get_spiro_atoms()` | `Uint32Array` | spiro center となる原子インデックス一覧。`compute_rings()` が前提。 |
+| `get_fused_ring_bonds()` | `[number,number][]` | 2 環が共有するボンド一覧。`compute_rings()` が前提。 |
+| `is_bridged_ring_system()` | `boolean` | ノルボルナン型の bridged ring 系があれば true。`compute_rings()` が前提。 |
 
 ---
 

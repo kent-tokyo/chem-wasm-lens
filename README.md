@@ -264,6 +264,51 @@ Supported SMARTS primitives: element symbols (`C`, `c`, `N`, `O` …), atomic nu
 |--------|---------|-------|
 | `generate_aligned_coords(template)` | `void` | Generates 2D coordinates aligned to `template` via substructure match + 2D Kabsch rotation. Falls back to normal `compute_2d_coords()` when no substructure match is found. |
 
+### Descriptors bundle & H handling
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `remove_hs()` | `MolecularSystem` | New instance with all H atoms stripped and bonds remapped |
+| `add_hs()` | `MolecularSystem` | New instance with implicit H atoms added as explicit atoms |
+| `get_descriptors()` | `object` | All common descriptors in one call: MW, formula, heavy atoms, charge, HBD, HBA, rotatable bonds, TPSA, LogP, MR, Fsp3, ring counts |
+| `normalize_depiction()` | `void` | Scale 2D coordinates so average bond = 1.5 Å, then center at origin |
+| `get_prop(name)` | `string\|undefined` | Read an SDF data item by name |
+| `set_prop(name, value)` | `void` | Write or overwrite an SDF data item |
+| `get_prop_list()` | `string[]` | All SDF data item names, sorted alphabetically |
+
+### Stereochemistry — E/Z & 3D perception
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `is_ez_bond(a, b)` | `boolean\|undefined` | `true`=E/trans, `false`=Z/cis, `undefined`=unspecified |
+| `ez_bond_count()` | `number` | Number of double bonds with known E/Z config |
+| `perceive_stereo_from_3d()` | `void` | Detect tetrahedral stereo from 3D coords (auto-called by `from_sdf_string`) |
+| `perceive_ez_from_3d()` | `void` | Detect E/Z stereo from 3D coords (auto-called by `from_sdf_string`) |
+| `get_stereo_tags()` | `{index,chirality}[]` | All tetrahedral stereo centers sorted by atom index |
+
+### Atom mapping
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `get_atom_map_index(idx)` | `number` | Atom-map number (`[C:1]`) for atom `idx`; 0 = unmapped |
+| `set_atom_map_index(idx, n)` | `void` | Set atom-map number |
+| `has_atom_map()` | `boolean` | True if any atom has a non-zero map number |
+| `clear_atom_map()` | `void` | Reset all map numbers to 0 |
+
+### Ring classification
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `get_spiro_atoms()` | `Uint32Array` | Atom indices that are spiro centers. Requires `compute_rings()`. |
+| `get_fused_ring_bonds()` | `[number,number][]` | Bonds shared by exactly two rings. Requires `compute_rings()`. |
+| `is_bridged_ring_system()` | `boolean` | True if any two rings share more than 2 atoms (norbornane-type). Requires `compute_rings()`. |
+
+### Additional fingerprints
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `fingerprint_topological()` | `Uint8Array` | 2048-bit path-based fingerprint (bond-length 1–7). Complements ECFP4 for 2D similarity. |
+
 ---
 
 ## Performance (Apple M-series, Wasm)
@@ -431,7 +476,7 @@ const neighbors: AtomInfo[] = mol.get_neighbors_info(0, 5.0);
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
 
-# Native unit tests (336 tests)
+# Native unit tests (375 tests)
 cargo test
 
 # Linting
