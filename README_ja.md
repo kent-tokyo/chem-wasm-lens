@@ -32,19 +32,19 @@ Pure Rust で書かれた超軽量の分子解析カーネルで、WebAssembly �
 Python + RDKit などのサーバー依存ソリューションは、バックエンドの構築・維持が必要で、ネットワーク遅延も避けられません。オフライン環境や高速インタラクティブ操作には向きません。
 
 **3. 既存の Wasm 分子ライブラリはバンドルが重い**
-RDKit.js は C++ の RDKit を Wasm ポートしたもので、機能は豊富ですが **バンドルサイズが ~10MB 超**。軽量なウェブアプリや「距離計算・近傍探索だけしたい」ユースケースには過剰です。
+RDKit.js は C++ の RDKit を Wasm ポートしたもので、機能は豊富ですが **バンドルサイズが ~10MB 超**。OpenChemLib（Java ベース、~3MB）も 2D 描画・SMILES には優れますが、PDB / 3D 空間クエリには非対応です。軽量なウェブアプリや「距離計算・近傍探索だけしたい」ユースケースには、どちらも過剰です。
 
 ### 解決策：chem-wasm-lens のアプローチ
 
-| | chem-wasm-lens | RDKit.js | Python + RDKit | Pure JS |
-|---|:---:|:---:|:---:|:---:|
-| ブラウザで動作 | Yes | Yes | No | Yes |
-| オフライン対応 | Yes | Yes | No | Yes |
-| 10k+ 原子対応 | Yes | Yes | Yes | No |
-| バンドルサイズ | 小 | 大(~10MB+) | — | 小 |
-| UI をブロックしない | Yes (Web Worker) | 条件付き | — | No |
-| インストール不要 | Yes | Yes | No | Yes |
-| C/C++ 依存 | なし | あり | あり | なし |
+| | chem-wasm-lens | RDKit.js | OpenChemLib | Python + RDKit | Pure JS |
+|---|:---:|:---:|:---:|:---:|:---:|
+| ブラウザで動作 | Yes | Yes | Yes | No | Yes |
+| オフライン対応 | Yes | Yes | Yes | No | Yes |
+| 10k+ 原子対応 | Yes | Yes | No | Yes | No |
+| バンドルサイズ | 小 (~200KB) | 大(~10MB+) | 中(~3MB) | — | 小 |
+| UI をブロックしない | Yes (Web Worker) | 条件付き | 条件付き | — | No |
+| インストール不要 | Yes | Yes | Yes | No | Yes |
+| C/C++ 依存 | なし | あり | なし | あり | なし |
 
 **chem-wasm-lens が選ぶアプローチ：**
 

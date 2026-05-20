@@ -90,25 +90,25 @@ console.log(`phi = ${mol.dihedral(0, 1, 2, 3).toFixed(1)}°`);
 
 ## Why chem-wasm-lens?
 
-| | chem-wasm-lens | RDKit.js | Pure JS |
-|---|:---:|:---:|:---:|
-| Runs in browser | Yes | Yes | Yes |
-| Non-blocking (Web Worker) | Yes | Partial | No |
-| Bundle size | ~200 KB | ~10 MB+ | varies |
-| C/C++ deps | **None** | Yes | None |
-| Parse 10k-atom PDB | 1.5 ms | ~20 ms | ~200 ms |
-| Radius query (10k atoms) | 1.5 µs | — | ~6 µs |
-| XYZ / PDB / SDF | Yes | Partial | varies |
-| Spatial index | Yes (voxel grid) | Yes | No |
-| Geometry (angle/dihedral) | Yes | Yes | No |
-| Kabsch superposition | Yes | Yes | No |
-| Scaffold analysis | Yes | No | No |
-| SMILES + stereochemistry | Yes | Yes | No |
-| SVG 2D rendering | Yes | No | No |
-| SMARTS substructure | Yes | Yes | No |
-| Fingerprint (ECFP4) + Tanimoto | Yes | Yes | No |
-| Lipinski / ADMET descriptors | Yes | Yes | No |
-| Structure editor kernel | **Yes** | No | No |
+| | chem-wasm-lens | RDKit.js | OpenChemLib | Pure JS |
+|---|:---:|:---:|:---:|:---:|
+| Runs in browser | Yes | Yes | Yes | Yes |
+| Non-blocking (Web Worker) | Yes | Partial | Partial | No |
+| Bundle size | ~200 KB | ~10 MB+ | ~3 MB | varies |
+| C/C++ deps | **None** | Yes | None | None |
+| Parse 10k-atom PDB | 1.5 ms | ~20 ms | — | ~200 ms |
+| Radius query (10k atoms) | 1.5 µs | — | — | ~6 µs |
+| XYZ / PDB / SDF | Yes | Partial | SDF only | varies |
+| Spatial index | Yes (voxel grid) | Yes | No | No |
+| Geometry (angle/dihedral) | Yes | Yes | No | No |
+| Kabsch superposition | Yes | Yes | No | No |
+| Scaffold analysis | Yes | No | Yes | No |
+| SMILES + stereochemistry | Yes | Yes | Yes | No |
+| SVG 2D rendering | Yes | No | Yes | No |
+| SMARTS substructure | Yes | Yes | Yes | No |
+| Fingerprint (ECFP4) + Tanimoto | Yes | Yes | Yes | No |
+| Lipinski / ADMET descriptors | Yes | Yes | Yes | No |
+| Structure editor kernel | **Yes** | No | Yes | No |
 
 Best for: **structural biology**, **cheminformatics**, **educational tools** — where you need real molecular analysis in the browser without a 10 MB dependency.
 

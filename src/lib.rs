@@ -82,6 +82,8 @@ pub struct MolecularSystem {
     stereo_centers: std::collections::HashMap<usize, (i8, Option<usize>)>,
     // Atom mapping numbers from SMILES [X:N] notation. 0 = no mapping.
     atom_map: Vec<u32>,
+    // E/Z stereo for double bonds. Key = (lower_idx, higher_idx). true = E (trans), false = Z (cis).
+    ez_bonds: std::collections::HashMap<(usize, usize), bool>,
     // ring_sizes_per_atom[i] = sizes of SSSR rings containing atom i.
     // Populated by compute_rings() after enumerate_rings().
     ring_sizes_per_atom: Vec<Vec<u8>>,
@@ -283,6 +285,24 @@ fn parse_coord_field(
         field,
         value: raw.to_string(),
     })
+}
+
+/// Bidirectional adjacency push with duplicate guard (O(degree), degree≤4 in practice).
+#[inline]
+fn adj_push_unique(adj: &mut [Vec<usize>], a: usize, b: usize) {
+    if !adj[a].contains(&b) { adj[a].push(b); }
+    if !adj[b].contains(&a) { adj[b].push(a); }
+}
+
+/// Same as adj_push_unique but also tracks parallel bond-order arrays.
+#[inline]
+fn adj_push_unique_ordered(
+    adj: &mut [Vec<usize>],
+    ord: &mut [Vec<u8>],
+    a: usize, b: usize, order: u8,
+) {
+    if !adj[a].contains(&b) { adj[a].push(b); ord[a].push(order); }
+    if !adj[b].contains(&a) { adj[b].push(a); ord[b].push(order); }
 }
 
 /// Derive an element symbol from a PDB atom name when the element column is absent.
@@ -544,12 +564,7 @@ pub fn parse_pdb(input: &str) -> Result<MolecularSystem, ParseError> {
         let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
         for (s1, s2) in conect_pairs {
             if let (Some(&i), Some(&j)) = (serial_to_index.get(&s1), serial_to_index.get(&s2)) {
-                if !adj[i].contains(&j) {
-                    adj[i].push(j);
-                }
-                if !adj[j].contains(&i) {
-                    adj[j].push(i);
-                }
+                adj_push_unique(&mut adj, i, j);
             }
         }
         adj
@@ -779,8 +794,7 @@ fn kekulize(
     let mut arom_adj: Vec<Vec<usize>> = vec![Vec::new(); n];
     for &(a, b, ord) in bonds.iter() {
         if ord == BondOrder::Aromatic {
-            if !arom_adj[a].contains(&b) { arom_adj[a].push(b); }
-            if !arom_adj[b].contains(&a) { arom_adj[b].push(a); }
+            adj_push_unique(&mut arom_adj, a, b);
         }
     }
     // Maximum matching on aromatic subgraph
@@ -860,6 +874,9 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
     // The previous atom index and the pending bond order between prev and next atom
     let mut prev: Option<usize> = None;
     let mut pending_bond: Option<BondOrder> = None;
+    // E/Z: bond direction chars. Parallel to `bonds`: +1 = /, -1 = \, 0 = none.
+    let mut bond_dirs: Vec<i8> = Vec::new();
+    let mut pending_dir: i8 = 0; // direction for the next bond
 
     let err_inv = |msg: &str| -> ParseError {
         ParseError::InvalidField { line: 1, field: "SMILES", value: msg.to_string() }
@@ -904,10 +921,12 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                             stored_order
                         };
                         bonds.push((open_atom, cur, order));
+                        bond_dirs.push(0); pending_dir = 0;
                     }
                     None => {
                         let order = pending_bond.take().unwrap_or(BondOrder::Single);
                         ring_opens.insert(digit, (cur, order));
+                        pending_dir = 0;
                     }
                 }
                 pos += 1;
@@ -930,10 +949,12 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                             stored_order
                         };
                         bonds.push((open_atom, cur, order));
+                        bond_dirs.push(0); pending_dir = 0;
                     }
                     None => {
                         let order = pending_bond.take().unwrap_or(BondOrder::Single);
                         ring_opens.insert(digit, (cur, order));
+                        pending_dir = 0;
                     }
                 }
                 pos += 3;
@@ -996,8 +1017,10 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                 if let Some(p) = prev {
                     let order = pending_bond.take().unwrap_or(BondOrder::Single);
                     bonds.push((p, atom_idx, order));
+                    bond_dirs.push(pending_dir); pending_dir = 0;
                 } else {
                     pending_bond = None;
+                    pending_dir = 0;
                 }
                 prev = Some(atom_idx);
             }
@@ -1023,8 +1046,10 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                 if let Some(p) = prev {
                     let order = pending_bond.take().unwrap_or(BondOrder::Single);
                     bonds.push((p, atom_idx, order));
+                    bond_dirs.push(pending_dir); pending_dir = 0;
                 } else {
                     pending_bond = None;
+                    pending_dir = 0;
                 }
                 prev = Some(atom_idx);
             }
@@ -1046,8 +1071,10 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
                         }
                     });
                     bonds.push((p, atom_idx, order));
+                    bond_dirs.push(pending_dir); pending_dir = 0;
                 } else {
                     pending_bond = None;
+                    pending_dir = 0;
                 }
                 prev = Some(atom_idx);
                 pos += 1;
@@ -1062,8 +1089,8 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
             // ── Dot (disconnected structure) ───────────────────────────────────
             '.' => { prev = None; pending_bond = None; pos += 1; }
 
-            // ── E/Z bond direction (treat as plain single bond for topology) ────
-            '/' | '\\' => { pos += 1; }
+            // ── E/Z bond direction ────────────────────────────────────────────
+            '/' | '\\' => { pending_dir = if c == '/' { 1 } else { -1 }; pos += 1; }
 
             _ => { pos += 1; } // silently skip unknown chars
         }
@@ -1107,6 +1134,39 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
     charges.extend(std::iter::repeat_n(0, h_count_added));
     let all_charges = charges;
 
+    // Build E/Z map from SMILES bond direction characters.
+    // bond_dirs[i] is parallel to bonds[i]: +1 = '/', -1 = '\', 0 = none.
+    // For double bond (b=c): find directed adjacent bonds on each side.
+    // Bond (a→b, dir d): substituent a is at position -d relative to b.
+    // Bond (c→d, dir d): substituent d is at position +d relative to c.
+    // Different positions → E (trans); same position → Z (cis).
+    let smiles_ez = {
+        let n_bonds = bonds.len();
+        let mut ez: std::collections::HashMap<(usize, usize), bool> = std::collections::HashMap::new();
+        for bi in 0..n_bonds {
+            let (b, c, ref border) = bonds[bi];
+            if *border != BondOrder::Double { continue; }
+            let mut pos_b: Option<i8> = None;
+            let mut pos_c: Option<i8> = None;
+            for ki in 0..n_bonds {
+                if ki == bi || bond_dirs[ki] == 0 { continue; }
+                let (aa, bb, _) = bonds[ki];
+                if pos_b.is_none() {
+                    if bb == b { pos_b = Some(-bond_dirs[ki]); }
+                    else if aa == b { pos_b = Some(bond_dirs[ki]); }
+                }
+                if pos_c.is_none() {
+                    if aa == c { pos_c = Some(bond_dirs[ki]); }
+                    else if bb == c { pos_c = Some(-bond_dirs[ki]); }
+                }
+            }
+            if let (Some(pb), Some(pc)) = (pos_b, pos_c) {
+                ez.insert((b.min(c), b.max(c)), pb != pc);
+            }
+        }
+        ez
+    };
+
     // Build adjacency list
     let all_bonds_iter = bonds.into_iter().chain(h_bonds);
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); total];
@@ -1114,14 +1174,7 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
     for (a, b, bond_ord) in all_bonds_iter {
         if a < total && b < total {
             let order = bond_ord.valence_contribution();
-            if !adj[a].contains(&b) {
-                adj[a].push(b);
-                adj_orders[a].push(order);
-            }
-            if !adj[b].contains(&a) {
-                adj[b].push(a);
-                adj_orders[b].push(order);
-            }
+            adj_push_unique_ordered(&mut adj, &mut adj_orders, a, b, order);
         }
     }
 
@@ -1144,6 +1197,7 @@ pub fn parse_smiles(input: &str) -> Result<MolecularSystem, ParseError> {
     mol.charges = all_charges;
     mol.aromatic_atoms = aromatic_atoms;
     mol.stereo_centers = stereo_map;
+    mol.ez_bonds = smiles_ez;
     mol.atom_map = atom_maps;
     Ok(mol)
 }
@@ -1505,8 +1559,13 @@ impl MolecularSystem {
 
     /// Parse an SDF / MOL V2000 string. Only the first molecule entry is loaded.
     /// Explicit bonds from the bond block are stored directly (no distance heuristic needed).
+    /// Stereo centers are automatically perceived from 3D coordinates when present;
+    /// 2D (flat, z=0) molecules are unaffected.
     pub fn from_sdf_string(data: &str) -> Result<MolecularSystem, JsValue> {
-        parse_sdf(data).map_err(|e| JsValue::from_str(&e.to_string()))
+        let mut mol = parse_sdf(data).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        mol.perceive_stereo_from_3d();
+        mol.perceive_ez_from_3d();
+        Ok(mol)
     }
 
     /// Count the number of molecule entries in an SDF file (delimited by `$$$$`).
@@ -2957,6 +3016,37 @@ impl MolecularSystem {
         self.charges.get(index).copied().unwrap_or(0)
     }
 
+    // ── Atom mapping (SMILES [C:1] notation) ──────────────────────────────────
+
+    /// Atom map index at `idx`. 0 means no mapping. Parsed from SMILES `[C:n]`.
+    #[wasm_bindgen]
+    pub fn get_atom_map_index(&self, idx: usize) -> u32 {
+        self.atom_map.get(idx).copied().unwrap_or(0)
+    }
+
+    /// Set the atom map index for atom `idx`. Extends the map array if needed.
+    #[wasm_bindgen]
+    pub fn set_atom_map_index(&mut self, idx: usize, map_num: u32) {
+        if self.atom_map.len() <= idx {
+            self.atom_map.resize(self.symbols.len().max(idx + 1), 0);
+        }
+        if let Some(slot) = self.atom_map.get_mut(idx) {
+            *slot = map_num;
+        }
+    }
+
+    /// Returns true if any atom carries a non-zero map index.
+    #[wasm_bindgen]
+    pub fn has_atom_map(&self) -> bool {
+        self.atom_map.iter().any(|&m| m != 0)
+    }
+
+    /// Reset all atom map indices to 0.
+    #[wasm_bindgen]
+    pub fn clear_atom_map(&mut self) {
+        self.atom_map.iter_mut().for_each(|m| *m = 0);
+    }
+
     /// Serialize this molecular system to XYZ format string.
     #[wasm_bindgen]
     pub fn to_xyz_string(&self) -> String {
@@ -3368,6 +3458,86 @@ impl MolecularSystem {
         self.ring_system_count_data() as u32
     }
 
+    // ── P57: Ring classification (spiro / fused / bridged) ───────────────────
+
+    /// Atom indices that are spiro centers: shared by two or more rings that
+    /// meet only at that single atom. Requires `compute_bonds()` + `compute_rings()`.
+    #[wasm_bindgen]
+    pub fn get_spiro_atoms(&self) -> Vec<u32> {
+        let rings = self.enumerate_rings();
+        let n = self.symbols.len();
+        let mut membership: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for (ri, ring) in rings.iter().enumerate() {
+            for &a in ring {
+                if a < n { membership[a].push(ri); }
+            }
+        }
+        let mut spiro: Vec<u32> = Vec::new();
+        'outer: for a in 0..n {
+            let mems = &membership[a];
+            if mems.len() < 2 { continue; }
+            for i in 0..mems.len() {
+                for j in (i + 1)..mems.len() {
+                    let shared = rings[mems[i]].iter()
+                        .filter(|&&x| rings[mems[j]].contains(&x))
+                        .count();
+                    if shared == 1 {
+                        spiro.push(a as u32);
+                        continue 'outer;
+                    }
+                }
+            }
+        }
+        spiro
+    }
+
+    fn fused_ring_bonds_vec(&self) -> Vec<[u32; 2]> {
+        let rings = self.enumerate_rings();
+        let n_rings = rings.len();
+        let mut result: Vec<[u32; 2]> = Vec::new();
+        let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        for i in 0..n_rings {
+            for j in (i + 1)..n_rings {
+                let shared: Vec<usize> = rings[i].iter()
+                    .filter(|&&a| rings[j].contains(&a))
+                    .copied()
+                    .collect();
+                if shared.len() == 2 {
+                    let (a, b) = (shared[0].min(shared[1]), shared[0].max(shared[1]));
+                    if seen.insert((a, b)) {
+                        result.push([a as u32, b as u32]);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Bonds shared by exactly two rings (fused ring bonds). Each entry is
+    /// `[atom_a, atom_b]`. Requires `compute_bonds()` + `compute_rings()`.
+    #[wasm_bindgen]
+    pub fn get_fused_ring_bonds(&self) -> JsValue {
+        to_js(&self.fused_ring_bonds_vec())
+    }
+
+    /// Returns true if any ring system in the molecule is bridged — two rings
+    /// sharing more than one bond (>2 atoms) between the same pair of bridgehead
+    /// atoms. Norbornane-type systems return true. Requires `compute_rings()`.
+    #[wasm_bindgen]
+    pub fn is_bridged_ring_system(&self) -> bool {
+        let rings = self.enumerate_rings();
+        let n_rings = rings.len();
+        for i in 0..n_rings {
+            for j in (i + 1)..n_rings {
+                let shared_count = rings[i].iter()
+                    .filter(|&&a| rings[j].contains(&a))
+                    .count();
+                if shared_count > 2 { return true; }
+            }
+        }
+        false
+    }
+
     // ── P27: Chain Breaks + Ramachandran Outliers (public Wasm API) ───────────
 
     /// Detect gaps in the protein backbone.
@@ -3455,6 +3625,138 @@ impl MolecularSystem {
     #[wasm_bindgen]
     pub fn is_stereo_center(&self, index: usize) -> bool {
         self.stereo_centers.contains_key(&index)
+    }
+
+    // ── P56: 3D stereo perception ─────────────────────────────────────────────
+    /// Perceive tetrahedral stereo centers from 3D coordinates and populate
+    /// `stereo_centers`. Enables `is_stereo_center()`, `stereo_center_count()`,
+    /// and stereo-aware `to_smiles()` output for molecules loaded from PDB,
+    /// 3D SDF, or mmCIF formats. Requires bonds (`compute_bonds()` or SDF bond
+    /// block). Silently returns without effect if bonds are unavailable or all
+    /// coordinates are zero (2D / SMILES-loaded molecules).
+    #[wasm_bindgen]
+    pub fn perceive_stereo_from_3d(&mut self) {
+        let n = self.symbols.len();
+        if n == 0 { return; }
+        if self.bonds.is_empty() || self.bonds.iter().all(|b| b.is_empty()) { return; }
+
+        let h_set: Vec<bool> = self.symbols.iter().map(|s| s == "H").collect();
+        self.stereo_centers.clear();
+
+        for center in 0..n {
+            if h_set[center] { continue; }
+
+            let all_nbrs: Vec<usize> = self.bonds
+                .get(center).cloned().unwrap_or_default();
+            let heavy_nbrs: Vec<usize> = all_nbrs.iter()
+                .copied().filter(|&j| !h_set[j]).collect();
+            let h_nbrs: Vec<usize> = all_nbrs.iter()
+                .copied().filter(|&j| h_set[j]).collect();
+
+            // Exactly 4 distinct substituents (any combination of heavy + H)
+            if heavy_nbrs.len() + h_nbrs.len() != 4 { continue; }
+            // Need at least one heavy neighbor to serve as the reference (from_atom)
+            if heavy_nbrs.is_empty() { continue; }
+
+            // Must have non-trivial 3D coordinates
+            let any_3d = |i: usize| self.x[i] != 0.0 || self.y[i] != 0.0 || self.z[i] != 0.0;
+            if !any_3d(center) && all_nbrs.iter().all(|&j| !any_3d(j)) { continue; }
+
+            // Observer = first heavy neighbor; remaining 3 = H (if any) + other heavy
+            let from_atom = heavy_nbrs[0];
+            let subs: Vec<usize> = h_nbrs.iter().copied()
+                .chain(heavy_nbrs[1..].iter().copied())
+                .collect();
+            if subs.len() != 3 { continue; }
+
+            let px = self.x[from_atom];
+            let py = self.y[from_atom];
+            let pz = self.z[from_atom];
+            let v = |i: usize| [self.x[i] - px, self.y[i] - py, self.z[i] - pz];
+            let [v1, v2, v3] = [v(subs[0]), v(subs[1]), v(subs[2])];
+
+            // Signed triple product: >0 → CCW = @(desc=-1), <0 → CW = @@(desc=1)
+            let vol = (v1[1]*v2[2] - v1[2]*v2[1]) * v3[0]
+                    + (v1[2]*v2[0] - v1[0]*v2[2]) * v3[1]
+                    + (v1[0]*v2[1] - v1[1]*v2[0]) * v3[2];
+            if vol.abs() < 1e-4 { continue; }
+
+            let desc: i8 = if vol < 0.0 { 1 } else { -1 };
+            self.stereo_centers.insert(center, (desc, Some(from_atom)));
+        }
+    }
+
+    /// Perceive E/Z double-bond stereochemistry from 3D coordinates.
+    /// Called automatically by `from_sdf_string`.
+    pub fn perceive_ez_from_3d(&mut self) {
+        let n = self.symbols.len();
+        if n < 4 { return; }
+        let h_set: Vec<bool> = self.symbols.iter().map(|s| s == "H").collect();
+        self.ez_bonds.clear();
+
+        for b in 0..n {
+            if h_set[b] { continue; }
+            let nbrs_b: Vec<usize> = self.bonds.get(b)
+                .map(|v| v.iter().copied().filter(|&j| !h_set[j]).collect())
+                .unwrap_or_default();
+            for &c in &nbrs_b {
+                if c <= b { continue; } // process each pair once
+                // Check if b-c is a double bond
+                let is_double = self.bond_orders.get(b)
+                    .and_then(|ords| self.bonds.get(b)
+                        .and_then(|nbrs| nbrs.iter().position(|&x| x == c))
+                        .map(|pos| ords.get(pos).copied().unwrap_or(0) == 2))
+                    .unwrap_or(false);
+                if !is_double { continue; }
+
+                // Need non-trivial 3D coords
+                let any_3d = |i: usize| self.x[i] != 0.0 || self.y[i] != 0.0 || self.z[i] != 0.0;
+                if !any_3d(b) && !any_3d(c) { continue; }
+
+                // Find first heavy substituent on each side (not the other double-bond atom)
+                let nbrs_c: Vec<usize> = self.bonds.get(c)
+                    .map(|v| v.iter().copied().filter(|&j| !h_set[j] && j != b).collect())
+                    .unwrap_or_default();
+                let sub_b: Vec<usize> = nbrs_b.iter().copied().filter(|&j| j != c).collect();
+
+                let (Some(&a), Some(&d)) = (sub_b.first(), nbrs_c.first()) else { continue };
+
+                // Dihedral angle a-b=c-d
+                let v = |i: usize, j: usize| -> [f32; 3] {
+                    [self.x[j]-self.x[i], self.y[j]-self.y[i], self.z[j]-self.z[i]]
+                };
+                let cross = |u: [f32;3], w: [f32;3]| -> [f32;3] {
+                    [u[1]*w[2]-u[2]*w[1], u[2]*w[0]-u[0]*w[2], u[0]*w[1]-u[1]*w[0]]
+                };
+                let dot = |u: [f32;3], w: [f32;3]| -> f32 { u[0]*w[0]+u[1]*w[1]+u[2]*w[2] };
+                let b1 = v(a, b);
+                let b2 = v(b, c);
+                let b3 = v(c, d);
+                let n1 = cross(b1, b2);
+                let n2 = cross(b2, b3);
+                let len1 = dot(n1, n1).sqrt();
+                let len2 = dot(n2, n2).sqrt();
+                if len1 < 1e-4 || len2 < 1e-4 { continue; }
+                let cos_d = dot(n1, n2) / (len1 * len2);
+                // cos near -1 → dihedral ~180° → trans (E); cos near +1 → ~0° → cis (Z)
+                let is_e = cos_d < 0.0;
+                self.ez_bonds.insert((b, c), is_e);
+            }
+        }
+    }
+
+    /// Return E/Z descriptor for a double bond between atoms `a` and `b`.
+    /// Returns `true` for E (trans), `false` for Z (cis), or `None` if unspecified.
+    #[wasm_bindgen]
+    pub fn is_ez_bond(&self, a: usize, b: usize) -> Option<bool> {
+        let key = (a.min(b), a.max(b));
+        self.ez_bonds.get(&key).copied()
+    }
+
+    /// Number of double bonds with known E/Z configuration.
+    #[wasm_bindgen]
+    pub fn ez_bond_count(&self) -> usize {
+        self.ez_bonds.len()
     }
 }
 
@@ -4151,6 +4453,7 @@ impl MolecularSystem {
             aromatic_atoms: Vec::new(),
             stereo_centers: std::collections::HashMap::new(),
             atom_map: Vec::new(),
+            ez_bonds: std::collections::HashMap::new(),
             ring_sizes_per_atom: Vec::new(),
             properties: std::collections::HashMap::new(),
         }
@@ -4300,6 +4603,15 @@ impl MolecularSystem {
                 }
             }
             sc
+        };
+        mol.ez_bonds = {
+            let mut ez = std::collections::HashMap::new();
+            for (&(oa, ob), &is_e) in &self.ez_bonds {
+                if let (Some(&na), Some(&nb)) = (old_to_new.get(oa), old_to_new.get(ob)) {
+                    ez.insert((na.min(nb), na.max(nb)), is_e);
+                }
+            }
+            ez
         };
         mol
     }
@@ -5352,26 +5664,85 @@ fn smiles_bracket_atom(sym: &str, charge: i32, implicit_h: u8) -> String {
     format!("[{sym}{h_str}{ch_str}]")
 }
 
-fn smiles_atom_string(
-    sym: &str, charge: i32,
-    heavy_degree: usize, explicit_h: usize,
-) -> String {
-    let default_val = smiles_default_valence(sym);
-    let implicit_h: u8 = if charge == 0 {
-        default_val.map(|v| {
-            (v as usize).saturating_sub(heavy_degree + explicit_h) as u8
-        }).unwrap_or(0)
-    } else { 0 };
-    let needs_bracket = default_val.is_none() || charge != 0;
-    if needs_bracket {
-        smiles_bracket_atom(sym, charge, implicit_h)
-    } else {
-        sym.to_string()
-    }
-}
 
 fn smiles_bond_char(order: u8) -> &'static str {
     match order { 2 => "=", 3 => "#", _ => "" }
+}
+
+/// Emit a SMILES atom token with an optional tetrahedral stereo annotation.
+/// `stereo`: Some(true) = "@@", Some(false) = "@", None = no annotation.
+/// When stereo is present the bracket is forced; `explicit_h` counts H-atom
+/// neighbors that are hidden from the DFS output and belong in the bracket.
+fn smiles_atom_string_stereo(
+    sym: &str,
+    charge: i32,
+    heavy_degree: usize,
+    explicit_h: usize,
+    stereo: Option<bool>,
+) -> String {
+    let default_val = smiles_default_valence(sym);
+    let implicit_h: u8 = if charge == 0 {
+        default_val
+            .map(|v| (v as usize).saturating_sub(heavy_degree + explicit_h) as u8)
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let needs_bracket = default_val.is_none() || charge != 0 || stereo.is_some();
+    if !needs_bracket {
+        return sym.to_string();
+    }
+    let h_count: u8 = if stereo.is_some() { explicit_h as u8 } else { implicit_h };
+    let h_str = match h_count { 0 => String::new(), 1 => "H".into(), n => format!("H{n}") };
+    let st_str = match stereo { Some(true) => "@@", Some(false) => "@", None => "" };
+    let ch_str = match charge {
+        0 => String::new(), 1 => "+".into(), -1 => "-".into(),
+        n if n > 0 => format!("+{n}"), n => format!("{n}"),
+    };
+    format!("[{sym}{st_str}{h_str}{ch_str}]")
+}
+
+/// Determine the SMILES tetrahedral stereo annotation for atom `u` in the
+/// current DFS context. Returns `Some(true)` = "@@" (CW), `Some(false)` = "@"
+/// (CCW), or `None` when stereo cannot be determined.
+///
+/// Convention: looking from `parent` toward `u`, the substituents are listed in
+/// SMILES bracket order — H-atom neighbor (if any) first, then `children` by
+/// canonical rank. Positive signed triple product → CCW → "@".
+fn smiles_stereo_at(
+    mol: &MolecularSystem,
+    u: usize,
+    parent: usize,
+    children: &[(usize, u8)],
+    h_set: &[bool],
+) -> Option<bool> {
+    let n = mol.symbols.len();
+    if parent >= n { return None; } // starting atom has no DFS parent
+
+    let h_nbr: Option<usize> = mol.bonds.get(u)
+        .into_iter().flatten().copied()
+        .find(|&j| j < n && h_set[j]);
+
+    let subs: Vec<usize> = h_nbr.into_iter()
+        .chain(children.iter().map(|(v, _)| *v))
+        .collect();
+    if subs.len() != 3 { return None; }
+
+    // Require at least one non-zero 3D coordinate among the participants
+    let any_3d = |i: usize| mol.x[i] != 0.0 || mol.y[i] != 0.0 || mol.z[i] != 0.0;
+    if !any_3d(u) && !any_3d(parent) && subs.iter().all(|&j| !any_3d(j)) {
+        return None;
+    }
+
+    let px = mol.x[parent]; let py = mol.y[parent]; let pz = mol.z[parent];
+    let v = |i: usize| [mol.x[i] - px, mol.y[i] - py, mol.z[i] - pz];
+    let [v1, v2, v3] = [v(subs[0]), v(subs[1]), v(subs[2])];
+
+    let vol = (v1[1]*v2[2] - v1[2]*v2[1]) * v3[0]
+            + (v1[2]*v2[0] - v1[0]*v2[2]) * v3[1]
+            + (v1[0]*v2[1] - v1[1]*v2[0]) * v3[2];
+
+    if vol.abs() < 1e-4 { None } else { Some(vol < 0.0) }
 }
 
 fn smiles_canonical_ranks(
@@ -5403,12 +5774,15 @@ fn smiles_canonical_ranks(
         fnv(fnv(fnv(fnv(fnv(sym_hash, heavy_deg as u32), h_count as u32), charge), in_ring), max_bo)
     }).collect();
 
-    // Morgan iteration
+    // Morgan iteration — pre-allocate scratch buffers outside the loop to avoid
+    // per-iteration heap allocations (typically 3–5 iterations, 3 clones each).
+    let mut tmp = Vec::with_capacity(n);
+    let mut new_ranks = Vec::with_capacity(n);
     loop {
-        let distinct_before = {
-            let mut tmp = ranks.clone(); tmp.sort_unstable(); tmp.dedup(); tmp.len()
-        };
-        let mut new_ranks = ranks.clone();
+        tmp.clone_from(&ranks); tmp.sort_unstable(); tmp.dedup();
+        let distinct_before = tmp.len();
+
+        new_ranks.clone_from(&ranks);
         for i in 0..n {
             if h_set[i] { continue; }
             let mut nbr_ranks: Vec<u32> = bonds.get(i).map(|nb| {
@@ -5418,11 +5792,10 @@ fn smiles_canonical_ranks(
             let r = nbr_ranks.iter().fold(ranks[i], |h, &v| fnv(h, v));
             new_ranks[i] = r;
         }
-        ranks = new_ranks;
-        let distinct_after = {
-            let mut tmp = ranks.clone(); tmp.sort_unstable(); tmp.dedup(); tmp.len()
-        };
-        if distinct_after <= distinct_before { break; }
+        ranks.clone_from(&new_ranks);
+
+        tmp.clone_from(&ranks); tmp.sort_unstable(); tmp.dedup();
+        if tmp.len() <= distinct_before { break; }
     }
 
     // Assign final unique ranks: sort heavy atoms by (rank, index) → guarantees uniqueness
@@ -5487,9 +5860,27 @@ fn smiles_dfs(
 
     let sym = &mol.symbols[u];
     let charge = charges.get(u).copied().unwrap_or(0);
-    let heavy_degree = mol.bonds.get(u).map(|nb| nb.iter().filter(|&&j| !h_set[j]).count()).unwrap_or(0);
-    let explicit_h   = mol.bonds.get(u).map(|nb| nb.iter().filter(|&&j| h_set[j]).count()).unwrap_or(0);
-    out.push_str(&smiles_atom_string(sym, charge, heavy_degree, explicit_h));
+
+    // Compute children BEFORE emitting the atom so stereo can be determined.
+    let nbrs = mol.bonds.get(u);
+    let heavy_degree = nbrs.map(|nb| nb.iter().filter(|&&j| !h_set[j]).count()).unwrap_or(0);
+    let explicit_h   = nbrs.map(|nb| nb.iter().filter(|&&j| h_set[j]).count()).unwrap_or(0);
+
+    let mut children: Vec<(usize, u8)> = nbrs.into_iter().flatten()
+        .enumerate()
+        .filter(|(_, &v)| !h_set[v] && !visited[v] && v != parent
+                && !ring_bond_set.contains(&(u.min(v), u.max(v))))
+        .map(|(k, &v)| {
+            let bo = mol.bond_orders.get(u).and_then(|o| o.get(k)).copied().unwrap_or(1);
+            (v, bo)
+        })
+        .collect();
+    children.sort_by(|(a, _), (b, _)| ranks[*b].cmp(&ranks[*a]));
+
+    // Tetrahedral stereo: only when a valid DFS parent exists and 3D coords present
+    let stereo = smiles_stereo_at(mol, u, parent, &children, h_set);
+
+    out.push_str(&smiles_atom_string_stereo(sym, charge, heavy_degree, explicit_h, stereo));
 
     // Emit ring-closure digits for this atom (pre-computed)
     if let Some(closures) = ring_closures.get(&u) {
@@ -5498,21 +5889,6 @@ fn smiles_dfs(
             out.push_str(d_str);
         }
     }
-
-    let nbrs = match mol.bonds.get(u) { Some(v) => v, None => return };
-
-    // Tree edges: unvisited, not parent, not a ring-forming edge
-    let mut children: Vec<(usize, u8)> = nbrs.iter().enumerate()
-        .filter(|(_, &v)| {
-            !h_set[v] && !visited[v] && v != parent
-            && !ring_bond_set.contains(&(u.min(v), u.max(v)))
-        })
-        .map(|(k, &v)| {
-            let bo = mol.bond_orders.get(u).and_then(|o| o.get(k)).copied().unwrap_or(1);
-            (v, bo)
-        })
-        .collect();
-    children.sort_by(|(a, _), (b, _)| ranks[*b].cmp(&ranks[*a]));
 
     for (idx, (v, bo)) in children.iter().enumerate() {
         if idx > 0 { out.push('('); }
@@ -7389,18 +7765,38 @@ impl MolecularSystem {
             }
         }
 
+        // Angle triplets for bending term: (a, b, c, ideal_angle_rad)
+        // b is the central atom. Ideal angles by heavy-atom degree of b.
+        let mut angle_triplets: Vec<(usize, usize, usize, f32)> = Vec::new();
+        for b in 0..n {
+            let nbrs: Vec<usize> = self.bonds.get(b).into_iter().flatten().copied().collect();
+            if nbrs.len() < 2 { continue; }
+            let theta_ideal: f32 = match nbrs.len() {
+                2 => 2.0943952f32, // 120° in radians (handles sp2 and most sp)
+                3 => 2.0943952f32, // 120°
+                _ => 1.9106332f32, // 109.47° (tetrahedral)
+            };
+            for i in 0..nbrs.len() {
+                for j in (i + 1)..nbrs.len() {
+                    angle_triplets.push((nbrs[i], b, nbrs[j], theta_ideal));
+                }
+            }
+        }
+
         let step_size = 0.01f32;
+        let k_angle = 0.30f32; // weight vs bond-stretch gradient (~2*diff)
         for _ in 0..200 {
             let mut gx = vec![0f32; n];
             let mut gy = vec![0f32; n];
             let mut gz = vec![0f32; n];
+
+            // Bond stretch
             for &(a, b, tgt) in &bond_pairs {
                 let dx = self.x[b] - self.x[a];
                 let dy = self.y[b] - self.y[a];
                 let dz = self.z[b] - self.z[a];
                 let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-6);
                 let diff = dist - tgt;
-                // gradient of (dist - tgt)² w.r.t. position a: -2*diff*(unit vec)
                 let ux = dx / dist;
                 let uy = dy / dist;
                 let uz = dz / dist;
@@ -7412,7 +7808,36 @@ impl MolecularSystem {
                 gy[b] += g * uy;
                 gz[b] += g * uz;
             }
-            // clip grad norm per atom
+
+            // Angle bending: harmonic on theta, gradient via analytical formula
+            for &(a, b, c, theta_ideal) in &angle_triplets {
+                let bx = self.x[b]; let by = self.y[b]; let bz = self.z[b];
+                let ax = self.x[a] - bx; let ay = self.y[a] - by; let az = self.z[a] - bz;
+                let cx = self.x[c] - bx; let cy = self.y[c] - by; let cz = self.z[c] - bz;
+                let da = (ax*ax + ay*ay + az*az).sqrt().max(1e-6);
+                let dc = (cx*cx + cy*cy + cz*cz).sqrt().max(1e-6);
+                let cos_t = ((ax*cx + ay*cy + az*cz) / (da * dc)).clamp(-1.0, 1.0);
+                let theta = cos_t.acos();
+                let diff = theta - theta_ideal;
+                if diff.abs() < 1e-4 { continue; }
+                let sin_t = (1.0 - cos_t * cos_t).sqrt().max(1e-6);
+                let (uax, uay, uaz) = (ax / da, ay / da, az / da);
+                let (ucx, ucy, ucz) = (cx / dc, cy / dc, cz / dc);
+                let scale = 2.0 * diff * k_angle;
+                let fax = (cos_t * uax - ucx) / (da * sin_t);
+                let fay = (cos_t * uay - ucy) / (da * sin_t);
+                let faz = (cos_t * uaz - ucz) / (da * sin_t);
+                let fcx = (cos_t * ucx - uax) / (dc * sin_t);
+                let fcy = (cos_t * ucy - uay) / (dc * sin_t);
+                let fcz = (cos_t * ucz - uaz) / (dc * sin_t);
+                gx[a] += scale * fax; gy[a] += scale * fay; gz[a] += scale * faz;
+                gx[c] += scale * fcx; gy[c] += scale * fcy; gz[c] += scale * fcz;
+                gx[b] -= scale * (fax + fcx);
+                gy[b] -= scale * (fay + fcy);
+                gz[b] -= scale * (faz + fcz);
+            }
+
+            // Clip grad norm per atom and update positions
             for i in 0..n {
                 let gnorm = (gx[i] * gx[i] + gy[i] * gy[i] + gz[i] * gz[i]).sqrt();
                 if gnorm > 1.0 {
@@ -11628,5 +12053,219 @@ $$$$
         let mol = parse_smiles("[C@@H](F)(Cl)Br").unwrap();
         assert_eq!(mol.stereo_center_count(), 1);
         assert!(mol.has_stereo());
+    }
+
+    // ── P56: perceive_stereo_from_3d + to_smiles stereo output ───────────────
+
+    // Tetrahedral C (4 heavy neighbors at proper 3D vertices, non-zero z)
+    const TETRA_3D_SDF: &str = "\
+tetra
+  test
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2124    0.0000   -0.3536 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4042    1.1431   -0.3536 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4042   -0.5715    1.0607 Br  0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4042   -0.5715   -1.0607 N   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  1  3  1  0
+  1  4  1  0
+  1  5  1  0
+$$$$
+";
+
+    // Same topology but all z=0 (degenerate / flat)
+    const TETRA_FLAT_SDF: &str = "\
+flat
+  test
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.0000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0  0  0  0  0  0  0
+    0.0000   -1.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  1  3  1  0
+  1  4  1  0
+  1  5  1  0
+$$$$
+";
+
+    // Enantiomer of TETRA_3D_SDF — z-coordinates negated.
+    const TETRA_3D_ENT_SDF: &str = "\
+tetra_ent
+  test
+
+  5  4  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0
+    1.2124    0.0000    0.3536 F   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4042    1.1431    0.3536 Cl  0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4042   -0.5715   -1.0607 Br  0  0  0  0  0  0  0  0  0  0  0  0
+   -0.4042   -0.5715    1.0607 N   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0
+  1  3  1  0
+  1  4  1  0
+  1  5  1  0
+$$$$
+";
+
+    #[test]
+    fn p56_perceive_stereo_from_3d_detects_center() {
+        let mut mol = parse_sdf(TETRA_3D_SDF).unwrap();
+        mol.perceive_stereo_from_3d();
+        assert_eq!(mol.stereo_center_count(), 1, "C should be detected as stereo center");
+        assert!(mol.is_stereo_center(0));
+    }
+
+    #[test]
+    fn p56_perceive_stereo_from_3d_no_center_flat() {
+        let mut mol = parse_sdf(TETRA_FLAT_SDF).unwrap();
+        mol.perceive_stereo_from_3d();
+        assert_eq!(mol.stereo_center_count(), 0, "flat molecule must have no stereo");
+    }
+
+    #[test]
+    fn p56_perceive_stereo_no_bonds_noop() {
+        // Without bonds, perceive_stereo_from_3d must return cleanly.
+        let mut mol = MolecularSystem::new_empty();
+        mol.symbols = vec!["C".into(), "F".into(), "Cl".into(), "Br".into()];
+        mol.x = vec![0.0, 1.0, -1.0, 0.0];
+        mol.y = vec![0.0, 0.0, 0.0, 1.0];
+        mol.z = vec![0.0, 0.5, 0.5, -0.5];
+        mol.perceive_stereo_from_3d();
+        assert_eq!(mol.stereo_center_count(), 0);
+    }
+
+    #[test]
+    fn p56_enantiomers_have_opposite_stereo_descriptor() {
+        // Verify sign convention: the two enantiomers (z-negated) must store
+        // opposite descriptor values in stereo_centers.
+        let mut mol_r = parse_sdf(TETRA_3D_SDF).unwrap();
+        mol_r.perceive_stereo_from_3d();
+        let (desc_r, _) = mol_r.stereo_centers[&0];
+
+        let mut mol_s = parse_sdf(TETRA_3D_ENT_SDF).unwrap();
+        mol_s.perceive_stereo_from_3d();
+        let (desc_s, _) = mol_s.stereo_centers[&0];
+
+        assert_ne!(desc_r, desc_s, "enantiomers must have opposite descriptors");
+        assert!(
+            (desc_r == 1 && desc_s == -1) || (desc_r == -1 && desc_s == 1),
+            "descriptors must be ±1, got {desc_r} and {desc_s}"
+        );
+    }
+
+    #[test]
+    fn p56_to_smiles_stereo_3d_outputs_annotation() {
+        // A 3D-embedded L-alanine SMILES round-trip should produce @/@@ annotation.
+        let mut mol = parse_smiles("N[C@@H](C)C(=O)O").unwrap();
+        mol.embed_molecule(42);
+        let smi = mol.to_smiles_data();
+        assert!(
+            smi.contains('@'),
+            "to_smiles() must output @ or @@ for 3D stereo center, got: {smi}"
+        );
+    }
+
+    #[test]
+    fn p56_embed_molecule_angle_quality() {
+        // Embed n-pentane (no rings), check that C-C-C heavy-atom angles converge
+        // close to the tetrahedral ideal (109.47° ± 25°). Fused-ring systems are
+        // excluded here because distance geometry needs many more steps for them.
+        let mut mol = parse_smiles("CCCCC").unwrap();
+        mol.embed_molecule(1);
+        // heavy atoms: C0-C1-C2-C3-C4 (indices 0–4)
+        for b in 1..4usize {
+            let a = b - 1;
+            let c = b + 1;
+            let angle_deg = mol.angle(a, b, c);
+            assert!(
+                (70.0..=150.0).contains(&angle_deg),
+                "C-C-C angle {angle_deg:.1}° for ({a},{b},{c}) out of expected range"
+            );
+        }
+    }
+
+    // ── P57: E/Z stereochemistry, atom mapping, ring classification ──────────
+
+    #[test]
+    fn p57_ez_smiles_trans_2_butene() {
+        // C/C=C/C → trans (E). Atoms: C0-C1=C2-C3, bond dirs on C0→C1 and C2→C3.
+        // After H addition: heavy atoms 0-3 are C,C,C,C in order.
+        let mol = parse_smiles("C/C=C/C").unwrap();
+        // double bond is between heavy atoms 1 and 2
+        let ez = mol.is_ez_bond(1, 2);
+        assert_eq!(ez, Some(true), "C/C=C/C should be E (trans)");
+        assert_eq!(mol.ez_bond_count(), 1);
+    }
+
+    #[test]
+    fn p57_ez_smiles_cis_2_butene() {
+        // C/C=C\C → cis (Z)
+        let mol = parse_smiles("C/C=C\\C").unwrap();
+        let ez = mol.is_ez_bond(1, 2);
+        assert_eq!(ez, Some(false), "C/C=C\\C should be Z (cis)");
+    }
+
+    #[test]
+    fn p57_ez_no_stereo_plain_double_bond() {
+        // C=C has no direction chars → no E/Z info
+        let mol = parse_smiles("CC=CC").unwrap();
+        assert_eq!(mol.ez_bond_count(), 0);
+    }
+
+    #[test]
+    fn p57_atom_map_parse_and_get() {
+        // [C:1]([H:2])([H:3])[H:4] — atom 0 has map index 1
+        let mol = parse_smiles("[C:1]([H:2])([H:3])[H:4]").unwrap();
+        assert!(mol.has_atom_map());
+        assert_eq!(mol.get_atom_map_index(0), 1);
+    }
+
+    #[test]
+    fn p57_atom_map_set_and_clear() {
+        let mut mol = parse_smiles("CC").unwrap();
+        assert!(!mol.has_atom_map());
+        mol.set_atom_map_index(0, 5);
+        assert!(mol.has_atom_map());
+        assert_eq!(mol.get_atom_map_index(0), 5);
+        mol.clear_atom_map();
+        assert!(!mol.has_atom_map());
+    }
+
+    #[test]
+    fn p57_spiro_atoms_spiro_nonane() {
+        // spiro[4.4]nonane: C1CCCC12CCCCC2 — atom 4 is the spiro center
+        let mut mol = parse_smiles("C1CCCC12CCCCC2").unwrap();
+        mol.compute_rings();
+        let spiro = mol.get_spiro_atoms();
+        assert!(!spiro.is_empty(), "spiro[4.4]nonane must have a spiro center");
+        assert!(spiro.contains(&4u32), "spiro center should be atom 4, got {spiro:?}");
+    }
+
+    #[test]
+    fn p57_fused_ring_bonds_naphthalene() {
+        // naphthalene: c1ccc2ccccc2c1 — has one fused (shared) bond
+        let mut mol = parse_smiles("c1ccc2ccccc2c1").unwrap();
+        mol.compute_rings();
+        let bonds = mol.fused_ring_bonds_vec();
+        assert!(!bonds.is_empty(), "naphthalene must have at least one fused bond");
+    }
+
+    #[test]
+    fn p57_bridged_ring_norbornane() {
+        // norbornane: C1CC2CCC1C2
+        let mut mol = parse_smiles("C1CC2CCC1C2").unwrap();
+        mol.compute_rings();
+        assert!(mol.is_bridged_ring_system(), "norbornane should be bridged");
+    }
+
+    #[test]
+    fn p57_not_bridged_cyclohexane() {
+        let mut mol = parse_smiles("C1CCCCC1").unwrap();
+        mol.compute_rings();
+        assert!(!mol.is_bridged_ring_system());
     }
 }
