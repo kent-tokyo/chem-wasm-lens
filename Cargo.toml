@@ -1,6 +1,6 @@
 [package]
 name = "chem-wasm-lens"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 description = "Ultra-lightweight WebAssembly kernel for cheminformatics: XYZ/PDB/SDF/SMILES/CML parsing, bond detection, ring & stereo analysis, fingerprints, 2D depiction"
 license = "MIT OR Apache-2.0"

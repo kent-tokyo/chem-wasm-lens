@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] - 2026-05-21
+
+### Added
+- **ChemDoodle JSON (CJSON) I/O**: `from_cjson_string` / `to_cjson_string` — round-trip conversion with multi-molecule support, formal charge, bond orders (1.5 aromatic → 2), and `MAX_ATOMS` guard
+- **Collision-aware fused ring 2D layout**: `coords2d_fused_collision_count` selects the lower-collision placement candidate for each fused ring, eliminating atom overlaps in polycyclic systems (phenanthrene, pyrene, acridine, biphenylene, acenaphthylene, etc.)
+
+### Fixed
+- Non-deterministic 2D layout: sort `ring_bonds` and `rings` before iterating to eliminate `HashSet` order variability across processes
+
 ## [0.2.7] - 2026-05-20
 
 ### Changed
