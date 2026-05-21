@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>chem-wasm-lens — ChemDoodle JSON I/O</title>
+  <!--
+    Build before opening:
+      wasm-pack build --target web
+
+    Serve (ES modules require HTTP, not file://):
+      python3 -m http.server 8080
+      # then open http://localhost:8080/examples/cjson.html
+  -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: #fafafa;
+      color: #222;
+    }
+    h1 { font-size: 1.15rem; margin-bottom: 0.25rem; }
+    .subtitle { font-size: 0.82rem; color: #666; margin-bottom: 1.5rem; }
+    .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    label { font-size: 0.82rem; color: #555; white-space: nowrap; }
+    input[type=text] {
+      flex: 1;
+      min-width: 200px;
+      font-size: 1rem;
+      font-family: monospace;
+      padding: 0.45rem 0.7rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    button {
+      padding: 0.45rem 1rem;
+      border: 1px solid #888;
+      border-radius: 4px;
+      background: #f0f0f0;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: #e0e0e0; }
+    button.preset { font-size: 0.78rem; padding: 0.3rem 0.6rem; border-color: #aaa; }
+    .panel {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .panel h2 { font-size: 0.9rem; margin: 0 0 0.75rem; color: #444; }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 600px) { .cols { grid-template-columns: 1fr; } }
+    textarea {
+      width: 100%;
+      font-family: monospace;
+      font-size: 0.78rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 0.5rem;
+      resize: vertical;
+      background: #f8f8f8;
+    }
+    #svg-canvas {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      min-height: 260px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #svg-canvas svg { display: block; }
+    .status { font-size: 0.82rem; color: #555; margin-top: 0.4rem; min-height: 1.2em; }
+    .status.err { color: #c33; }
+    .status.ok  { color: #292; }
+    .arrow {
+      text-align: center;
+      font-size: 1.5rem;
+      color: #888;
+      padding: 0.5rem 0;
+    }
+    .info-row { font-size: 0.8rem; color: #555; margin-top: 0.4rem; }
+    .badge {
+      display: inline-block;
+      background: #e8f0fe;
+      color: #1a56db;
+      border-radius: 3px;
+      padding: 0.1em 0.4em;
+      font-size: 0.75rem;
+      font-family: monospace;
+      margin-right: 0.3em;
+    }
+  </style>
+</head>
+<body>
+  <h1>chem-wasm-lens — ChemDoodle JSON (CJSON) I/O
+    &nbsp;<a href="index.html" style="font-size:0.8rem;color:#48a">[ feature demo ]</a>
+    &nbsp;<a href="smiles_svg.html" style="font-size:0.8rem;color:#48a">[ SMILES SVG ]</a>
+  </h1>
+  <p class="subtitle">
+    Round-trip conversion: SMILES &#8594; CJSON &#8594; SVG &nbsp;|&nbsp;
+    Compatible with <a href="https://web.chemdoodle.com/" target="_blank">ChemDoodle Web Components</a>
+  </p>
+
+  <!-- SMILES → CJSON -->
+  <div class="panel">
+    <h2>1. SMILES &#8594; ChemDoodle JSON</h2>
+    <div class="row">
+      <label>SMILES:</label>
+      <input id="smiles-input" type="text" value="c1ccc2ccccc2c1" autocomplete="off" spellcheck="false" />
+      <button id="convert-btn">Convert</button>
+    </div>
+    <div class="row" style="gap:0.4rem">
+      <span style="font-size:0.78rem;color:#888">Presets:</span>
+      <button class="preset" data-smiles="c1ccccc1">Benzene</button>
+      <button class="preset" data-smiles="c1ccc2ccccc2c1">Naphthalene</button>
+      <button class="preset" data-smiles="c1ccc2ccc3cccc4ccc(c1)c2c34">Chrysene (4 rings)</button>
+      <button class="preset" data-smiles="c1ccc2cc3ccccc3cc2c1">Anthracene</button>
+      <button class="preset" data-smiles="CC(=O)O">Acetic acid</button>
+      <button class="preset" data-smiles="CC(=O)Nc1ccc(O)cc1">Paracetamol</button>
+      <button class="preset" data-smiles="CN1C=NC2=C1C(=O)N(C(=O)N2C)C">Caffeine</button>
+      <button class="preset" data-smiles="c1ccc2-c3ccccc3-c2c1">Biphenylene</button>
+    </div>
+    <div class="status" id="smiles-status"></div>
+  </div>
+
+  <div class="cols">
+    <!-- CJSON output / input -->
+    <div>
+      <div class="panel" style="height:100%">
+        <h2>ChemDoodle JSON</h2>
+        <textarea id="cjson-area" rows="14" placeholder="CJSON will appear here…" spellcheck="false"></textarea>
+        <div class="status" id="cjson-status"></div>
+        <div style="margin-top:0.6rem">
+          <button id="render-btn" style="width:100%">Render CJSON &#8594; SVG</button>
+        </div>
+        <div class="info-row" style="margin-top:0.5rem">
+          Edit the JSON above and click Render to visualise custom CJSON.
+        </div>
+      </div>
+    </div>
+
+    <!-- SVG preview -->
+    <div>
+      <div class="panel" style="height:100%">
+        <h2>SVG Preview</h2>
+        <div id="svg-canvas"><span style="color:#aaa;font-size:0.85rem">Render to see structure</span></div>
+        <div id="mol-info" class="info-row" style="margin-top:0.5rem"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CJSON format reference -->
+  <div class="panel" style="background:#f5f8ff;border-color:#c8d8f8">
+    <h2>CJSON format reference</h2>
+    <pre style="font-size:0.75rem;margin:0;overflow-x:auto">{
+  "m": [                          // array of molecules
+    {
+      "a": [                      // atoms
+        { "x": 0.0, "y": 0.0, "l": "C" },         // x, y coords + element label
+        { "x": 1.5, "y": 0.0, "l": "O", "c": -1 } // "c": formal charge (optional)
+      ],
+      "b": [                      // bonds
+        { "b": 0, "e": 1, "o": 1 }  // begin index, end index, order (1/2/3)
+      ]
+    }
+  ]
+}</pre>
+    <div class="info-row" style="margin-top:0.5rem">
+      <span class="badge">from_cjson_string(s)</span> parses CJSON &nbsp;|&nbsp;
+      <span class="badge">to_cjson_string()</span> serialises to CJSON &nbsp;|&nbsp;
+      Bond order 1.5 (aromatic) is read as 2 (Kekulized)
+    </div>
+  </div>
+
+  <script type="module">
+    import { loadChem } from 'https://cdn.jsdelivr.net/npm/@kent-tokyo/chem-wasm-lens/dist/chem-wasm-lens.esm.js';
+
+    const { MolecularSystem } = await loadChem();
+
+    const smilesInput  = document.getElementById('smiles-input');
+    const cjsonArea    = document.getElementById('cjson-area');
+    const svgCanvas    = document.getElementById('svg-canvas');
+    const smilesStatus = document.getElementById('smiles-status');
+    const cjsonStatus  = document.getElementById('cjson-status');
+    const molInfo      = document.getElementById('mol-info');
+
+    function clearCanvas() {
+      while (svgCanvas.firstChild) svgCanvas.removeChild(svgCanvas.firstChild);
+    }
+
+    function renderMol(mol) {
+      clearCanvas();
+      mol.compute_2d_coords();
+      const W = Math.min(svgCanvas.clientWidth || 400, 420);
+      const svg = mol.to_svg_string(W, 280);
+      const el = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
+      svgCanvas.appendChild(el);
+      const n = mol.atom_count();
+      molInfo.textContent = `${n} atoms · ${mol.bond_count()} bonds · MW ${mol.molecular_weight().toFixed(2)} · ${mol.molecular_formula()}`;
+    }
+
+    // SMILES → CJSON
+    document.getElementById('convert-btn').addEventListener('click', () => {
+      const smiles = smilesInput.value.trim();
+      smilesStatus.className = 'status';
+      smilesStatus.textContent = '';
+      if (!smiles) { smilesStatus.textContent = 'Enter a SMILES string.'; return; }
+
+      let mol;
+      try { mol = MolecularSystem.from_smiles(smiles); }
+      catch (e) {
+        smilesStatus.className = 'status err';
+        smilesStatus.textContent = `Parse error: ${e}`;
+        return;
+      }
+
+      const cjson = mol.to_cjson_string();
+      // Pretty-print
+      try { cjsonArea.value = JSON.stringify(JSON.parse(cjson), null, 2); }
+      catch { cjsonArea.value = cjson; }
+
+      smilesStatus.className = 'status ok';
+      smilesStatus.textContent = `Converted: ${mol.atom_count()} atoms, ${mol.bond_count()} bonds`;
+      renderMol(mol);
+      cjsonStatus.className = 'status';
+      cjsonStatus.textContent = '';
+    });
+
+    // CJSON → SVG
+    document.getElementById('render-btn').addEventListener('click', () => {
+      const cjson = cjsonArea.value.trim();
+      cjsonStatus.className = 'status';
+      cjsonStatus.textContent = '';
+      if (!cjson) { cjsonStatus.textContent = 'Paste or generate CJSON above.'; return; }
+
+      let mol;
+      try { mol = MolecularSystem.from_cjson_string(cjson); }
+      catch (e) {
+        cjsonStatus.className = 'status err';
+        cjsonStatus.textContent = `Parse error: ${e}`;
+        return;
+      }
+
+      renderMol(mol);
+      cjsonStatus.className = 'status ok';
+      cjsonStatus.textContent = `Rendered: ${mol.atom_count()} atoms`;
+    });
+
+    // Preset buttons
+    document.querySelectorAll('button.preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        smilesInput.value = btn.dataset.smiles;
+        document.getElementById('convert-btn').click();
+      });
+    });
+
+    // Auto-convert on load
+    document.getElementById('convert-btn').click();
+  </script>
+</body>
+</html>

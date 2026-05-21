@@ -2738,7 +2738,11 @@ impl MolecularSystem {
             return result;
         }
 
-        for &(u, v) in &self.ring_bonds {
+        // Sort for deterministic ring ordering regardless of HashSet iteration order.
+        let mut ring_bond_list: Vec<(usize, usize)> = self.ring_bonds.iter().copied().collect();
+        ring_bond_list.sort_unstable();
+
+        for &(u, v) in &ring_bond_list {
             // Try both directions so fused-ring systems produce both rings
             for (src, dst) in [(u, v), (v, u)] {
                 let mut queue: VecDeque<usize> = VecDeque::from([src]);
@@ -5051,7 +5055,9 @@ impl MolecularSystem {
             self.compute_rings();
         }
         let h_set: Vec<bool> = self.symbols.iter().map(|s| s == "H").collect();
-        let rings = self.enumerate_rings();
+        // Sort rings by minimum atom index for deterministic layout regardless of HashSet iteration order.
+        let mut rings = self.enumerate_rings();
+        rings.sort_by_key(|r| r.iter().copied().min().unwrap_or(0));
         let frags = coords2d_heavy_fragments(&self.bonds, &h_set, n);
         let mut coords: Vec<[f32; 2]> = vec![[0.0; 2]; n];
         let mut placed: Vec<bool> = vec![false; n];
@@ -5330,6 +5336,43 @@ fn coords2d_place_ngon(
     }
 }
 
+fn coords2d_fused_collision_count(
+    ring: &[usize],
+    anchor: usize,
+    center: [f32; 2],
+    coords: &[[f32; 2]],
+    placed: &[bool],
+    bond_len: f32,
+) -> usize {
+    use std::f32::consts::PI;
+    let nf = ring.len() as f32;
+    let radius = bond_len / (2.0 * (PI / nf).sin());
+    let angle_anchor = (coords[anchor][1] - center[1]).atan2(coords[anchor][0] - center[0]);
+    let anchor_pos = ring.iter().position(|&i| i == anchor).unwrap_or(0);
+    // Only exclude unplaced ring atoms; placed anchor atoms must be included so that
+    // a new atom landing exactly on an anchor is detected as a collision.
+    let unplaced_ring: std::collections::HashSet<usize> = ring.iter()
+        .copied()
+        .filter(|&a| !placed.get(a).copied().unwrap_or(false))
+        .collect();
+    let threshold_sq = (bond_len * 0.55) * (bond_len * 0.55);
+
+    let mut count = 0usize;
+    for (offset, &atom) in ring.iter().enumerate() {
+        if placed.get(atom).copied().unwrap_or(false) { continue; }
+        let angle = angle_anchor + (offset as isize - anchor_pos as isize) as f32 * 2.0 * PI / nf;
+        let tx = center[0] + radius * angle.cos();
+        let ty = center[1] + radius * angle.sin();
+        for (j, &is_placed) in placed.iter().enumerate() {
+            if !is_placed || unplaced_ring.contains(&j) { continue; }
+            let dx = tx - coords[j][0];
+            let dy = ty - coords[j][1];
+            if dx * dx + dy * dy < threshold_sq { count += 1; }
+        }
+    }
+    count
+}
+
 fn coords2d_place_fused(
     ring: &[usize],
     u: usize,
@@ -5349,27 +5392,34 @@ fn coords2d_place_fused(
     let len = (dx * dx + dy * dy).sqrt().max(1e-6);
     let perp = [-dy / len, dx / len];
     let apothem = bond_len / (2.0 * (PI / n).tan());
-    // Use centroid of all placed atoms to choose the far side
-    let placed_count = placed.iter().filter(|&&p| p).count();
-    let (cx, cy) = if placed_count > 0 {
-        let sx: f32 = coords.iter().zip(placed.iter()).filter(|(_, &p)| p).map(|(c, _)| c[0]).sum();
-        let sy: f32 = coords.iter().zip(placed.iter()).filter(|(_, &p)| p).map(|(c, _)| c[1]).sum();
-        (sx / placed_count as f32, sy / placed_count as f32)
-    } else {
-        (mid[0], mid[1])
-    };
     let c1 = [mid[0] + apothem * perp[0], mid[1] + apothem * perp[1]];
     let c2 = [mid[0] - apothem * perp[0], mid[1] - apothem * perp[1]];
-    let d1 = (c1[0] - cx).powi(2) + (c1[1] - cy).powi(2);
-    let d2 = (c2[0] - cx).powi(2) + (c2[1] - cy).powi(2);
-    let center = if d1 >= d2 { c1 } else { c2 };
+
+    // Prefer the candidate with fewer collisions against already-placed atoms.
+    // Fall back to the centroid-distance heuristic (far side) when tied.
+    let col1 = coords2d_fused_collision_count(ring, u, c1, coords, placed, bond_len);
+    let col2 = coords2d_fused_collision_count(ring, u, c2, coords, placed, bond_len);
+    let center = if col1 != col2 {
+        if col1 < col2 { c1 } else { c2 }
+    } else {
+        let placed_count = placed.iter().filter(|&&p| p).count();
+        let (cx, cy) = if placed_count > 0 {
+            let sx: f32 = coords.iter().zip(placed.iter()).filter(|(_, &p)| p).map(|(c, _)| c[0]).sum();
+            let sy: f32 = coords.iter().zip(placed.iter()).filter(|(_, &p)| p).map(|(c, _)| c[1]).sum();
+            (sx / placed_count as f32, sy / placed_count as f32)
+        } else {
+            (mid[0], mid[1])
+        };
+        let d1 = (c1[0] - cx).powi(2) + (c1[1] - cy).powi(2);
+        let d2 = (c2[0] - cx).powi(2) + (c2[1] - cy).powi(2);
+        if d1 >= d2 { c1 } else { c2 }
+    };
+
     let radius = bond_len / (2.0 * (PI / n).sin());
     let angle_u = (coords[u][1] - center[1]).atan2(coords[u][0] - center[0]);
     let u_pos = ring.iter().position(|&i| i == u).unwrap_or(0);
     for (offset, &atom) in ring.iter().enumerate() {
-        if placed[atom] {
-            continue;
-        }
+        if placed[atom] { continue; }
         let angle = angle_u + (offset as isize - u_pos as isize) as f32 * 2.0 * PI / n;
         coords[atom] = [center[0] + radius * angle.cos(), center[1] + radius * angle.sin()];
         placed[atom] = true;
@@ -6517,6 +6567,87 @@ fn mol_to_ket_string(mol: &MolecularSystem) -> String {
     )
 }
 
+// --- ChemDoodle JSON (CJSON) ---
+
+fn parse_cjson(s: &str) -> Result<MolecularSystem, ParseError> {
+    let v: serde_json::Value = serde_json::from_str(s).map_err(|_| ParseError::EmptyInput)?;
+    let mut mol = MolecularSystem::new_empty();
+    let mut pending_bonds: Vec<(usize, usize, u8)> = Vec::new();
+    let mut atom_offset = 0usize;
+
+    let molecules = v.get("m").and_then(|m| m.as_array()).ok_or(ParseError::EmptyInput)?;
+
+    for molecule in molecules {
+        if let Some(atoms) = molecule.get("a").and_then(|a| a.as_array()) {
+            for atom in atoms {
+                if mol.symbols.len() >= MAX_ATOMS {
+                    return Err(ParseError::AtomLimitExceeded { found: mol.symbols.len() + 1, limit: MAX_ATOMS });
+                }
+                let label = atom.get("l").and_then(|l| l.as_str()).unwrap_or("C");
+                let x = atom.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                let y = atom.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                let z = atom.get("z").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                let charge = atom.get("c").and_then(|c| c.as_i64()).unwrap_or(0) as i32;
+                p41_push_atom(&mut mol, label, x, y, charge);
+                if let Some(last_z) = mol.z.last_mut() { *last_z = z; }
+            }
+        }
+
+        if let Some(bonds) = molecule.get("b").and_then(|b| b.as_array()) {
+            for bond in bonds {
+                let a = bond.get("b").and_then(|v| v.as_u64()).unwrap_or(0) as usize + atom_offset;
+                let b = bond.get("e").and_then(|v| v.as_u64()).unwrap_or(0) as usize + atom_offset;
+                let order: u8 = bond.get("o").and_then(|o| o.as_f64())
+                    .map(|n| if n >= 2.5 { 3 } else if n >= 1.5 { 2 } else { 1 })
+                    .unwrap_or(1);
+                pending_bonds.push((a, b, order));
+            }
+        }
+        atom_offset = mol.symbols.len();
+    }
+
+    if mol.symbols.is_empty() { return Err(ParseError::EmptyInput); }
+
+    mol.bonds = vec![Vec::new(); mol.symbols.len()];
+    mol.bond_orders = vec![Vec::new(); mol.symbols.len()];
+    for (a, b, order) in pending_bonds {
+        p41_add_bond(&mut mol, a, b, order);
+    }
+    Ok(mol)
+}
+
+fn mol_to_cjson_string(mol: &MolecularSystem) -> String {
+    let mut atoms_json = String::new();
+    for i in 0..mol.symbols.len() {
+        if i > 0 { atoms_json.push(','); }
+        let charge = mol.charges.get(i).copied().unwrap_or(0);
+        let z = mol.z.get(i).copied().unwrap_or(0.0);
+        let mut s = format!("{{\"x\":{:.6},\"y\":{:.6}", mol.x[i], mol.y[i]);
+        if z != 0.0 { s.push_str(&format!(",\"z\":{:.6}", z)); }
+        let escaped_label = mol.symbols[i].replace('\\', "\\\\").replace('"', "\\\"");
+        s.push_str(&format!(",\"l\":\"{}\"", escaped_label));
+        if charge != 0 { s.push_str(&format!(",\"c\":{}", charge)); }
+        s.push('}');
+        atoms_json.push_str(&s);
+    }
+
+    let mut bonds_json = String::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut first = true;
+    for a in 0..mol.bonds.len() {
+        for (k, &b) in mol.bonds[a].iter().enumerate() {
+            let key = if a < b { (a, b) } else { (b, a) };
+            if !seen.insert(key) { continue; }
+            let order = mol.bond_orders.get(a).and_then(|v| v.get(k)).copied().unwrap_or(1);
+            if !first { bonds_json.push(','); }
+            first = false;
+            bonds_json.push_str(&format!("{{\"b\":{},\"e\":{},\"o\":{}}}", a, b, order));
+        }
+    }
+
+    format!("{{\"m\":[{{\"a\":[{}],\"b\":[{}]}}]}}", atoms_json, bonds_json)
+}
+
 // --- RXN (MDL Reaction Format) ---
 
 fn parse_rxn(s: &str) -> Result<Reaction, ParseError> {
@@ -6833,6 +6964,11 @@ impl MolecularSystem {
         parse_cml(s).map_err(|e| JsValue::from_str(&e.to_string()))
     }
     pub fn to_cml_string(&self) -> String { mol_to_cml_string(self) }
+
+    pub fn from_cjson_string(s: &str) -> Result<MolecularSystem, JsValue> {
+        parse_cjson(s).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+    pub fn to_cjson_string(&self) -> String { mol_to_cjson_string(self) }
 }
 
 // --- P42: Editor Kernel ---
@@ -10958,6 +11094,84 @@ $$$$
         assert!(xmax - xmin > 3.0, "naphthalene x-span > 3.0 Å, got {}", xmax - xmin);
     }
 
+    fn coords2d_no_collisions(mol: &crate::MolecularSystem) -> Vec<(usize, usize)> {
+        // Returns pairs of non-bonded heavy atoms closer than BOND_LEN_2D * 0.5
+        let threshold = crate::BOND_LEN_2D * 0.5;
+        let heavy: Vec<usize> = mol.symbols.iter().enumerate()
+            .filter(|(_, s)| s.as_str() != "H").map(|(i, _)| i).collect();
+        let bonded = |a: usize, b: usize| -> bool {
+            mol.bonds.get(a).map(|nb| nb.contains(&b)).unwrap_or(false)
+        };
+        let mut collisions = Vec::new();
+        for ii in 0..heavy.len() {
+            for jj in (ii + 1)..heavy.len() {
+                let (i, j) = (heavy[ii], heavy[jj]);
+                if bonded(i, j) { continue; }
+                let dx = mol.x[i] - mol.x[j];
+                let dy = mol.y[i] - mol.y[j];
+                if dx * dx + dy * dy < threshold * threshold {
+                    collisions.push((i, j));
+                }
+            }
+        }
+        collisions
+    }
+
+    #[test]
+    fn coords2d_phenanthrene_no_collision() {
+        // Phenanthrene: angular 3-ring PAH — classic case where naive centroid heuristic fails
+        let mut mol = parse_smiles("c1ccc2ccc3ccccc3c2c1").unwrap();
+        mol.compute_2d_coords_data();
+        let collisions = coords2d_no_collisions(&mol);
+        assert!(collisions.is_empty(), "phenanthrene layout collisions: {:?}", collisions);
+    }
+
+    #[test]
+    fn coords2d_anthracene_no_collision() {
+        // Anthracene: linear 3-ring PAH
+        let mut mol = parse_smiles("c1ccc2cc3ccccc3cc2c1").unwrap();
+        mol.compute_2d_coords_data();
+        let collisions = coords2d_no_collisions(&mol);
+        assert!(collisions.is_empty(), "anthracene layout collisions: {:?}", collisions);
+    }
+
+    #[test]
+    fn coords2d_pyrene_no_collision() {
+        // Pyrene: 4-ring PAH, complex connectivity
+        let mut mol = parse_smiles("c1cc2ccc3cccc4ccc(c1)c2c34").unwrap();
+        mol.compute_2d_coords_data();
+        let collisions = coords2d_no_collisions(&mol);
+        assert!(collisions.is_empty(), "pyrene layout collisions: {:?}", collisions);
+    }
+
+    #[test]
+    fn coords2d_acenaphthylene_no_collision() {
+        // Acenaphthylene (C12H8): 5+6+6 fused ring system with 5-membered ring
+        // SMILES verified SSSR: 5+6+6 (correct structure, not fluoranthene's wrong SMILES)
+        let mut mol = parse_smiles("c1cc2cccc3cccc1c23").unwrap();
+        mol.compute_2d_coords_data();
+        let collisions = coords2d_no_collisions(&mol);
+        assert!(collisions.is_empty(), "acenaphthylene layout collisions: {:?}", collisions);
+    }
+
+    #[test]
+    fn coords2d_acridine_no_collision() {
+        // Acridine: nitrogen-containing 3-ring system (angular)
+        let mut mol = parse_smiles("c1ccc2nc3ccccc3cc2c1").unwrap();
+        mol.compute_2d_coords_data();
+        let collisions = coords2d_no_collisions(&mol);
+        assert!(collisions.is_empty(), "acridine layout collisions: {:?}", collisions);
+    }
+
+    #[test]
+    fn coords2d_biphenylene_no_collision() {
+        // Biphenylene: two benzenes joined by a 4-membered ring
+        let mut mol = parse_smiles("c1ccc2-c3ccccc3-c2c1").unwrap();
+        mol.compute_2d_coords_data();
+        let collisions = coords2d_no_collisions(&mol);
+        assert!(collisions.is_empty(), "biphenylene layout collisions: {:?}", collisions);
+    }
+
     #[test]
     fn coords2d_disconnected_fragments_separated() {
         // Two isolated atoms from XYZ (no bonds): must be placed at different x
@@ -12264,5 +12478,63 @@ $$$$
         let mut mol = parse_smiles("C1CCCCC1").unwrap();
         mol.compute_rings();
         assert!(!mol.is_bridged_ring_system());
+    }
+
+    // ── CJSON tests ───────────────────────────────────────────────────────
+
+    #[test]
+    fn cjson_parse_ethanol() {
+        let cjson = r#"{"m":[{"a":[{"x":0.0,"y":0.0,"l":"C"},{"x":1.54,"y":0.0,"l":"C"},{"x":3.08,"y":0.0,"l":"O"}],"b":[{"b":0,"e":1,"o":1},{"b":1,"e":2,"o":1}]}]}"#;
+        let mol = parse_cjson(cjson).expect("cjson parse failed");
+        assert_eq!(mol.symbols.len(), 3);
+        assert_eq!(mol.symbols[0], "C");
+        assert_eq!(mol.symbols[2], "O");
+        assert_eq!(mol.bonds[1].len(), 2);
+    }
+
+    #[test]
+    fn cjson_parse_bond_orders() {
+        // CO2: C with two double bonds to O
+        let cjson = r#"{"m":[{"a":[{"x":0.0,"y":0.0,"l":"C"},{"x":1.2,"y":0.0,"l":"O"},{"x":-1.2,"y":0.0,"l":"O"}],"b":[{"b":0,"e":1,"o":2},{"b":0,"e":2,"o":2}]}]}"#;
+        let mol = parse_cjson(cjson).expect("cjson parse failed");
+        assert_eq!(mol.bond_orders[0][0], 2);
+        assert_eq!(mol.bond_orders[0][1], 2);
+    }
+
+    #[test]
+    fn cjson_roundtrip_acetic_acid() {
+        // acetic acid (heavy atoms only): C-C(=O)-O
+        let cjson = r#"{"m":[{"a":[{"x":0.0,"y":0.0,"l":"C"},{"x":1.54,"y":0.0,"l":"C"},{"x":3.08,"y":0.0,"l":"O"},{"x":1.54,"y":1.54,"l":"O"}],"b":[{"b":0,"e":1,"o":1},{"b":1,"e":2,"o":1},{"b":1,"e":3,"o":2}]}]}"#;
+        let mol = parse_cjson(cjson).expect("cjson parse failed");
+        assert_eq!(mol.symbols.len(), 4);
+        let out = mol_to_cjson_string(&mol);
+        let mol2 = parse_cjson(&out).expect("cjson roundtrip parse failed");
+        assert_eq!(mol2.symbols.len(), 4);
+        assert_eq!(mol2.symbols[2], "O");
+        assert!((mol2.x[1] - 1.54).abs() < 0.01);
+        assert_eq!(mol2.bond_orders[1][2], 2);
+    }
+
+    #[test]
+    fn cjson_parse_charge() {
+        let cjson = r#"{"m":[{"a":[{"x":0.0,"y":0.0,"l":"N","c":1},{"x":1.54,"y":0.0,"l":"O","c":-1}],"b":[{"b":0,"e":1,"o":1}]}]}"#;
+        let mol = parse_cjson(cjson).expect("cjson parse failed");
+        assert_eq!(mol.charges[0], 1);
+        assert_eq!(mol.charges[1], -1);
+    }
+
+    #[test]
+    fn cjson_parse_missing_m_returns_error() {
+        let bad = r#"{"atoms":[]}"#;
+        assert!(parse_cjson(bad).is_err());
+    }
+
+    #[test]
+    fn cjson_multi_molecule() {
+        let cjson = r#"{"m":[{"a":[{"x":0.0,"y":0.0,"l":"C"}],"b":[]},{"a":[{"x":5.0,"y":0.0,"l":"O"}],"b":[]}]}"#;
+        let mol = parse_cjson(cjson).expect("cjson multi-mol parse failed");
+        assert_eq!(mol.symbols.len(), 2);
+        assert_eq!(mol.symbols[0], "C");
+        assert_eq!(mol.symbols[1], "O");
     }
 }

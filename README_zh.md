@@ -4,18 +4,18 @@
 
 用 Pure Rust 编写的超轻量分子分析内核，编译为 WebAssembly。设计用于在浏览器 Web Worker 中运行，在不阻塞 UI 线程的情况下，对大型分子结构（10k+ 原子）执行高性能的拓扑分析、距离查询和几何计算。
 
-**[在线演示](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D 查看器](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [真实蛋白质（RCSB）](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [结构式编辑器](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [指纹](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D 对齐](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
+**[在线演示](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [ChemDoodle JSON](https://kent-tokyo.github.io/chem-wasm-lens/examples/cjson.html) · [3D 查看器](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [真实蛋白质（RCSB）](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [结构式编辑器](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [指纹](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D 对齐](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
 
 <table>
 <tr>
 <td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="260" alt="SMILES SVG 演示"></a></td>
+<td align="center"><b>ChemDoodle JSON I/O</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/cjson.html"><img src="docs/screenshots/cjson.gif" width="260" alt="ChemDoodle JSON 演示"></a></td>
 <td align="center"><b>指纹相似度</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="260" alt="指纹演示"></a></td>
-<td align="center"><b>2D 对齐</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D 对齐演示"></a></td>
 </tr>
 <tr>
+<td align="center"><b>2D 对齐</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D 对齐演示"></a></td>
 <td align="center"><b>结构编辑器</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html"><img src="docs/screenshots/editor.gif" width="260" alt="结构编辑器演示"></a></td>
 <td align="center"><b>3D 查看器</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html"><img src="docs/screenshots/viewer.gif" width="260" alt="3D 查看器演示"></a></td>
-<td align="center"><b>真实蛋白质 (PDB)</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html"><img src="docs/screenshots/fetch_demo.gif" width="260" alt="真实蛋白质 PDB 演示"></a></td>
 </tr>
 </table>
 
@@ -71,6 +71,8 @@ RDKit.js（C++ RDKit 的 Wasm 移植版）功能丰富，但 **Bundle 大小超�
 - **体素网格空间索引** — 均匀网格将近邻查询加速至平均 O(1)；未构建索引时自动回退到 O(N) 线性扫描
 - **serde JSON 输出** — `get_atom_info()` 和 `get_neighbors_info()` 通过 `serde-wasm-bindgen` 返回结构化 JS 对象
 - **结构式编辑器内核** — 提供原子/键的增删改、环模板、缩环、矩形选择、价键检查等 API，可在浏览器中构建完整的结构式编辑器
+- **ChemDoodle JSON (CJSON) 输入输出** — `from_cjson_string` / `to_cjson_string` 支持 ChemDoodle JSON 的读写，涵盖多分子、形式电荷、键级，与 ChemDoodle Web Components 兼容
+- **2D 坐标确定性布局** — `enumerate_rings()` 排序固定化，同一 SMILES 始终生成相同的 2D 布局；稠合环配置采用碰撞感知候选选择，改善了 biphenylene、pyrene 等结构的布局
 
 ## 状态
 
@@ -233,6 +235,13 @@ console.log(residues); // 例如: ["A:ALA:10", "A:GLY:11", ...]
 | `normalize_depiction()` | `void` | 将平均键长归一化为 1.5 Å 并居中 |
 | `fingerprint_topological()` | `Uint8Array` | 基于路径的 2048-bit 指纹（键长 1–7） |
 | `get_stereo_tags()` | `{index,chirality}[]` | 四面体立体中心列表（`"@"` / `"@@"`） |
+
+### ChemDoodle JSON (CJSON) 输入输出
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `from_cjson_string(s)` | `MolecularSystem` | 解析 ChemDoodle JSON；支持多分子、形式电荷、键级（1.5 芳香键 → 2） |
+| `to_cjson_string()` | `string` | 序列化为 ChemDoodle JSON；与 ChemDoodle Web Components 兼容 |
 
 ### 立体化学 — E/Z 与 3D 感知（P56–P57）
 

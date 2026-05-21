@@ -4,18 +4,18 @@
 
 Pure Rust で書かれた超軽量の分子解析カーネルで、WebAssembly にコンパイルされます。ブラウザの Web Worker 内で動作し、UI スレッドをブロックすることなく、大規模な分子構造（10k+ 原子）に対するトポロジー解析・距離クエリ・幾何計算を高速に処理します。
 
-**[ライブデモ](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D ビューア](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [実タンパク質（RCSB）](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [構造式エディタ](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [フィンガープリント](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D アライメント](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
+**[ライブデモ](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [ChemDoodle JSON](https://kent-tokyo.github.io/chem-wasm-lens/examples/cjson.html) · [3D ビューア](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [実タンパク質（RCSB）](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [構造式エディタ](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [フィンガープリント](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D アライメント](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
 
 <table>
 <tr>
 <td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="260" alt="SMILES SVG デモ"></a></td>
+<td align="center"><b>ChemDoodle JSON I/O</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/cjson.html"><img src="docs/screenshots/cjson.gif" width="260" alt="ChemDoodle JSON デモ"></a></td>
 <td align="center"><b>フィンガープリント類似度</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="260" alt="フィンガープリント デモ"></a></td>
-<td align="center"><b>2D アライメント</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D アライメント デモ"></a></td>
 </tr>
 <tr>
+<td align="center"><b>2D アライメント</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D アライメント デモ"></a></td>
 <td align="center"><b>構造エディタ</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html"><img src="docs/screenshots/editor.gif" width="260" alt="構造エディタ デモ"></a></td>
 <td align="center"><b>3D ビューア</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html"><img src="docs/screenshots/viewer.gif" width="260" alt="3D ビューア デモ"></a></td>
-<td align="center"><b>実タンパク質 (PDB)</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html"><img src="docs/screenshots/fetch_demo.gif" width="260" alt="実タンパク質 PDB デモ"></a></td>
 </tr>
 </table>
 
@@ -71,6 +71,8 @@ RDKit.js は C++ の RDKit を Wasm ポートしたもので、機能は豊富�
 - **ボクセルグリッド空間インデックス** — 均一グリッドにより近傍クエリを平均 O(1) に高速化。インデックス未構築時は O(N) 線形探索にフォールバック
 - **serde JSON 出力** — `get_atom_info()` と `get_neighbors_info()` が `serde-wasm-bindgen` を介して構造化 JS オブジェクトを返す
 - **構造式エディタカーネル** — 原子・結合の追加・削除・変更、環テンプレート、縮環、矩形選択、バレンスチェックなど、ブラウザ上で動く構造式エディタを構築するための API セットを提供
+- **ChemDoodle JSON (CJSON) 入出力** — `from_cjson_string` / `to_cjson_string` で ChemDoodle JSON の読み書きに対応。複数分子・形式電荷・結合次数をサポートし、ChemDoodle Web Components と互換
+- **2D 座標決定論的レイアウト** — `enumerate_rings()` のソート順が固定化され、同一 SMILES から常に同じ 2D 配置を生成。縮合環配置は衝突回避候補選択により改善
 
 ## ステータス
 
@@ -234,6 +236,13 @@ console.log(residues); // 例: ["A:ALA:10", "A:GLY:11", ...]
 | `fingerprint_topological()` | `Uint8Array` | パスベース 2048-bit フィンガープリント（結合長 1–7） |
 | `get_stereo_tags()` | `{index,chirality}[]` | 四面体立体中心の一覧（`"@"` / `"@@"`） |
 | `get_prop(name)` / `set_prop(name, value)` | `string\|undefined` / `void` | SDF データアイテムの読み書き |
+
+### ChemDoodle JSON (CJSON) 入出力
+
+| メソッド | 返り値 | 説明 |
+|---------|--------|------|
+| `from_cjson_string(s)` | `MolecularSystem` | ChemDoodle JSON をパース。複数分子・形式電荷・結合次数（1.5 芳香族 → 2）をサポート |
+| `to_cjson_string()` | `string` | ChemDoodle JSON にシリアライズ。ChemDoodle Web Components と互換 |
 
 ### 立体化学 — E/Z・3D 知覚（P56–P57）
 

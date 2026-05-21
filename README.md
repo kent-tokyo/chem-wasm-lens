@@ -9,18 +9,18 @@
 
 An ultra-lightweight molecular analysis kernel in **pure Rust**, compiled to **WebAssembly**. Parse PDB / SDF / XYZ / mmCIF files, run spatial queries, detect bonds, compute geometry, and perform fingerprint similarity — all inside a browser Web Worker, with zero C/C++ dependencies.
 
-**[Live demo](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [3D viewer](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [real protein (RCSB)](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [structure editor](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [fingerprints](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D alignment](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
+**[Live demo](https://kent-tokyo.github.io/chem-wasm-lens/examples/)** — [SMILES → SVG](https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html) · [ChemDoodle JSON](https://kent-tokyo.github.io/chem-wasm-lens/examples/cjson.html) · [3D viewer](https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html) · [real protein (RCSB)](https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html) · [structure editor](https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html) · [fingerprints](https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html) · [2D alignment](https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html)
 
 <table>
 <tr>
 <td align="center"><b>SMILES → SVG</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/smiles_svg.html"><img src="docs/screenshots/smiles_svg.gif" width="260" alt="SMILES SVG demo"></a></td>
+<td align="center"><b>ChemDoodle JSON I/O</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/cjson.html"><img src="docs/screenshots/cjson.gif" width="260" alt="ChemDoodle JSON demo"></a></td>
 <td align="center"><b>Fingerprint Similarity</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fingerprint.html"><img src="docs/screenshots/fingerprint.gif" width="260" alt="Fingerprint demo"></a></td>
-<td align="center"><b>2D Alignment</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D alignment demo"></a></td>
 </tr>
 <tr>
+<td align="center"><b>2D Alignment</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/alignment.html"><img src="docs/screenshots/alignment.gif" width="260" alt="2D alignment demo"></a></td>
 <td align="center"><b>Structure Editor</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/editor.html"><img src="docs/screenshots/editor.gif" width="260" alt="Structure editor demo"></a></td>
 <td align="center"><b>3D Viewer</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/viewer.html"><img src="docs/screenshots/viewer.gif" width="260" alt="3D viewer demo"></a></td>
-<td align="center"><b>Real Protein (PDB)</b><br><a href="https://kent-tokyo.github.io/chem-wasm-lens/examples/fetch_demo.html"><img src="docs/screenshots/fetch_demo.gif" width="260" alt="Real protein PDB demo"></a></td>
 </tr>
 </table>
 
@@ -123,6 +123,13 @@ Best for: **structural biology**, **cheminformatics**, **educational tools** —
 | `from_pdb_string(s)` | PDB | ATOM/HETATM, CONECT, chain/residue metadata |
 | `from_sdf_string(s)` | SDF V2000 | Explicit bonds from bond block |
 | `from_smiles(s)` | SMILES | Organic subset; topology + implicit H |
+| `from_cjson_string(s)` | ChemDoodle JSON | Multiple molecules, z-coord, formal charge, bond orders |
+
+### ChemDoodle JSON (CJSON) I/O
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `from_cjson_string(s)` | `MolecularSystem` | Parse ChemDoodle JSON; supports multiple molecules, formal charge, bond orders (1.5 aromatic → 2) |
+| `to_cjson_string()` | `string` | Serialize to ChemDoodle JSON; compatible with ChemDoodle Web Components |
 
 ### Spatial queries
 | Method | Returns | Notes |
@@ -157,7 +164,7 @@ Best for: **structural biology**, **cheminformatics**, **educational tools** —
 ### 2D structure rendering
 | Method | Returns | Notes |
 |--------|---------|-------|
-| `compute_2d_coords()` | `void` | Ring-aware 2D layout (regular polygon rings + zig-zag chains) |
+| `compute_2d_coords()` | `void` | Ring-aware 2D layout (regular polygon rings + zig-zag chains); deterministic ordering; collision-aware fused-ring placement |
 | `to_svg_string(width, height)` | `string` | SVG markup; H hidden, CPK colours, aromatic inner dashes, wedge/dash stereo bonds |
 | `to_svg_string_highlighted(width, height, atoms)` | `string` | SVG with yellow halos on specified atoms (`Uint32Array`) |
 | `is_aromatic(index)` | `boolean` | True for SMILES lowercase atoms (c/n/o/s); false for XYZ/PDB/SDF |
